@@ -13,8 +13,10 @@ import {
   calculateTimeHours,
   deriveSalaryInsights,
   formatDate,
+  getHolidayInfo,
   getShiftPreset,
   inferDayType,
+  isWorkday,
   mergeSettings,
   monthIndexFromDate,
   normalizeEntry,
@@ -259,6 +261,10 @@ document.addEventListener("submit", (event) => {
 document.addEventListener("input", (event) => {
   if (event.target.closest("#entry-form")) {
     ui.entryError = "";
+    if (event.target.name === "date" && state.settings.autoDayType) {
+      const form = event.target.closest("#entry-form");
+      form.elements.dayType.value = inferDayType(event.target.value, state.settings);
+    }
     updateEntryPreview();
   }
 });
@@ -453,17 +459,25 @@ function renderCalendarView() {
 function renderDayCommandBar() {
   const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
   const autoAmount = Number(state.settings.autoAdjustment?.amount || 0);
+  const dayType = inferDayType(ui.selectedDate, state.settings);
+  const holiday = getHolidayInfo(ui.selectedDate);
   return `
     <div class="command-strip" aria-label="快速记录">
-      <button type="button" data-action="save-default-shift"><strong>套用${escapeHtml(preset?.name || "默认班次")}</strong><span>替换当天主记录</span></button>
-      <button type="button" data-action="copy-previous"><strong>复制上次</strong><span>替换当天主记录</span></button>
-      <button type="button" data-action="quick-overtime"><strong>加班 2h</strong><span>重复点击不叠加</span></button>
-      <button type="button" data-action="add-day-adjustment"><strong>${autoAmount ? `补扣 ${money(autoAmount)}` : "补贴/扣款"}</strong><span>记录奖罚餐补</span></button>
+      <div class="command-context">
+        <span>${escapeHtml(holiday ? holiday.name : DAY_TYPE_LABELS[dayType])}</span>
+        <strong>${payRuleTextForDayType(dayType)}</strong>
+      </div>
+      <button class="is-primary" type="button" data-action="save-default-shift"><strong>登记${escapeHtml(preset?.name || "默认班次")}</strong><span>一键保存今天</span></button>
+      <button type="button" data-action="copy-previous"><strong>复制上次</strong><span>少填一遍</span></button>
+      <button type="button" data-action="quick-overtime"><strong>加班 2h</strong><span>自动替换同日快捷加班</span></button>
+      <button type="button" data-action="add-day-adjustment"><strong>${autoAmount ? `补扣 ${money(autoAmount)}` : "补贴/扣款"}</strong><span>奖金餐补罚款</span></button>
     </div>
   `;
 }
 
 function renderDayStatus(entries) {
+  const inferredDayType = inferDayType(ui.selectedDate, state.settings);
+  const holiday = getHolidayInfo(ui.selectedDate);
   const normalized = entries.map((entry) => normalizeEntry(entry, state.settings));
   const totalHours = round2(normalized.reduce((sum, entry) => sum + entry.totalHours, 0));
   const regularHours = round2(normalized.reduce((sum, entry) => sum + entry.regularHours, 0));
@@ -472,8 +486,11 @@ function renderDayStatus(entries) {
   const isWarning = totalHours > WORK_LIMITS.maxDayHours;
   const text = entries.length
     ? `${entries.length} 条记录，正班 ${regularHours}h，加班 ${overtimeHours}h`
-    : "当天还没有工时，先套班次或直接填时间";
-  const ruleText = entries.length ? payRuleTextForEntries(entries) : "工作日加班按 1.5 倍";
+    : `${holiday ? holiday.name : DAY_TYPE_LABELS[inferredDayType]}，可直接选班次保存`;
+  const ruleText = entries.length ? payRuleTextForEntries(entries) : payRuleTextForDayType(inferredDayType);
+  const dayMeta = holiday
+    ? `${holiday.marker}${holiday.adjusted ? " · 调休上班" : ""}`
+    : (inferredDayType === "restday" ? "周末休息日" : "默认工作日");
   return `
     <div class="day-status ${isWarning ? "is-warning" : ""}">
       <div>
@@ -482,7 +499,7 @@ function renderDayStatus(entries) {
       </div>
       <div>
         <b>${money(pay)}</b>
-        <span>${ruleText} · 上限 ${WORK_LIMITS.maxDayHours}h</span>
+        <span>${dayMeta} · ${ruleText} · 上限 ${WORK_LIMITS.maxDayHours}h</span>
       </div>
     </div>
   `;
@@ -493,17 +510,26 @@ function renderDayCell(day, entries, adjustments) {
   const hours = round2(normalized.reduce((sum, entry) => sum + entry.totalHours, 0));
   const pay = round2(normalized.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
   const hasAdjustment = adjustments.length > 0;
+  const dayType = inferDayType(day.date, state.settings);
+  const holiday = day.holiday || getHolidayInfo(day.date);
+  const marker = holiday?.marker || (dayType === "restday" ? "休" : "");
+  const note = holiday?.name || (dayType === "restday" ? "周末" : "");
   const classes = [
     "day-cell",
     day.inMonth ? "" : "is-muted",
     day.date === ui.selectedDate ? "is-selected" : "",
     day.date === today ? "is-today" : "",
     hours > 0 ? "has-work" : "",
-    hasAdjustment ? "has-adjustment" : ""
+    hasAdjustment ? "has-adjustment" : "",
+    dayType === "holiday" ? "is-holiday" : "",
+    dayType === "restday" ? "is-restday" : "",
+    holiday?.adjusted ? "is-adjusted" : ""
   ].filter(Boolean).join(" ");
   return `
     <button class="${classes}" type="button" data-date="${day.date}">
       <span class="day-number">${Number(day.date.slice(8, 10))}</span>
+      ${marker ? `<span class="day-marker">${escapeHtml(marker)}</span>` : ""}
+      ${note ? `<span class="day-note">${escapeHtml(note)}</span>` : ""}
       <span class="day-hours">${hours ? `${hours}h` : ""}</span>
       <span class="day-pay">${pay ? money(pay) : ""}</span>
     </button>
@@ -513,17 +539,25 @@ function renderDayCell(day, entries, adjustments) {
 function payRuleTextForEntries(entries) {
   const hasHoliday = entries.some((entry) => normalizeEntry(entry, state.settings).dayType === "holiday");
   const hasRestDay = entries.some((entry) => normalizeEntry(entry, state.settings).dayType === "restday");
-  if (hasHoliday) return `法定假日 ${overtimeMultiplierForDay("holiday", state.settings)} 倍`;
-  if (hasRestDay) return `休息日 ${overtimeMultiplierForDay("restday", state.settings)} 倍`;
-  return `加班 ${overtimeMultiplierForDay("workday", state.settings)} 倍`;
+  if (hasHoliday) return payRuleTextForDayType("holiday");
+  if (hasRestDay) return payRuleTextForDayType("restday");
+  return payRuleTextForDayType("workday");
+}
+
+function payRuleTextForDayType(dayType) {
+  if (dayType === "holiday") return `法定假日 ${overtimeMultiplierForDay("holiday", state.settings)} 倍`;
+  if (dayType === "restday") return `休息日 ${overtimeMultiplierForDay("restday", state.settings)} 倍`;
+  return `工作日加班 ${overtimeMultiplierForDay("workday", state.settings)} 倍`;
 }
 
 function renderEntryForm() {
   const editing = state.entries.find((entry) => entry.id === ui.editingEntryId);
+  const inferredDayType = inferDayType(ui.selectedDate, state.settings);
+  const holiday = getHolidayInfo(ui.selectedDate);
   const entry = editing || {
     date: ui.selectedDate,
     recordMode: RECORD_MODES.TIME,
-    dayType: "workday",
+    dayType: inferredDayType,
     startTime: "09:00",
     endTime: "18:00",
     breakMinutes: 60,
@@ -537,17 +571,24 @@ function renderEntryForm() {
   return `
     <form id="entry-form" class="tool-form" data-record-mode="${recordMode}">
       <input type="hidden" name="id" value="${escapeAttr(entry.id || "")}">
+      <div class="record-form-head">
+        <div>
+          <span>${editing ? "编辑记录" : "登记工时"}</span>
+          <strong>${escapeHtml(holiday ? `${holiday.name} · ${DAY_TYPE_LABELS[inferredDayType]}` : DAY_TYPE_LABELS[inferredDayType])}</strong>
+        </div>
+        <small>${payRuleTextForDayType(entry.dayType || inferredDayType)}</small>
+      </div>
       <div class="preset-grid" aria-label="班次模板">
         ${state.settings.shiftPresets.map((preset) => renderPresetButton(preset, entry)).join("")}
       </div>
       <div class="form-grid">
         ${field("日期", `<input name="date" type="date" value="${escapeAttr(entry.date || ui.selectedDate)}" required>`)}
         ${field("日期类型", `
-          <select name="dayType">
-            ${option("workday", "工作日", entry.dayType)}
-            ${option("restday", "休息日", entry.dayType)}
-            ${option("holiday", "法定节假日", entry.dayType)}
-          </select>
+          <div class="segmented compact" role="radiogroup" aria-label="日期类型">
+            ${radio("dayType", "workday", "工作日", entry.dayType)}
+            ${radio("dayType", "restday", "休息日", entry.dayType)}
+            ${radio("dayType", "holiday", "法定假日", entry.dayType)}
+          </div>
         `)}
       </div>
       <div class="segmented" role="radiogroup" aria-label="记录方式">
@@ -571,9 +612,9 @@ function renderEntryForm() {
       ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="本日目标">`)}
       ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="备注">${escapeHtml(entry.note || "")}</textarea>`)}
       <div id="entry-error" class="form-error" role="alert" ${ui.entryError ? "" : "hidden"}>${escapeHtml(ui.entryError)}</div>
-      <div class="form-footer">
+      <div class="form-footer form-footer-strong">
         <output id="entry-preview">0h / ¥0.00</output>
-        <button class="primary-button" type="submit">${editing ? "保存修改" : "保存记录"}</button>
+        <button class="primary-button submit-button" type="submit">${editing ? "保存修改" : "保存今天"}</button>
       </div>
     </form>
   `;
@@ -581,10 +622,16 @@ function renderEntryForm() {
 
 function renderPresetButton(preset, entry) {
   const active = matchesPreset(preset, entry);
+  const previewEntry = buildEntryFromShiftPreset(ui.selectedDate, preset, {
+    settings: state.settings,
+    dayType: preset.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(ui.selectedDate, state.settings)
+  });
+  const pay = calculateEntryPay(previewEntry, state.settings);
   return `
     <button class="${active ? "is-active" : ""}" type="button" data-preset="${escapeAttr(preset.id)}">
       <strong>${escapeHtml(preset.name)}</strong>
       <span>${preset.recordMode === RECORD_MODES.TIME ? `${preset.startTime}-${preset.endTime}` : `${preset.totalHours || preset.regularHours + preset.overtimeHours}h`}</span>
+      <small>${previewEntry.totalHours}h · ${money(pay.totalPay)}</small>
     </button>
   `;
 }
@@ -682,14 +729,14 @@ function renderRecordsView() {
 
 function renderBulkPreview() {
   const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings.workweek);
+  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings);
   const existing = new Set(state.entries.map((entry) => entry.date));
   const pending = dates.filter((date) => !existing.has(date));
   return `
     <div class="bulk-panel">
       <div>
         <strong>批量生成工作日记录</strong>
-        <span>${MONTHS[ui.monthIndex]} 还有 ${pending.length} 个工作日未记录，将套用 ${escapeHtml(preset?.name || "默认班次")}</span>
+        <span>${MONTHS[ui.monthIndex]} 还有 ${pending.length} 个工作日未记录，已排除节假日和周末并包含调休上班，将套用 ${escapeHtml(preset?.name || "默认班次")}</span>
       </div>
       <button class="primary-button" type="button" data-action="bulk-current-month">生成</button>
     </div>
@@ -885,6 +932,7 @@ function renderSettingsView() {
           <div class="workweek-grid">
             ${WEEKDAYS.map((day, index) => checkbox(`workweek.${index}`, String(index), day, settings.workweek.includes(index))).join("")}
           </div>
+          ${renderHolidayRuleCard()}
           <label class="check-row">
             <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
             <span>保存工时时自动添加日补扣</span>
@@ -928,6 +976,19 @@ function renderLegalRuleCard() {
         <strong>1.5x / 2x / 3x</strong>
       </div>
       <p>工作日延长工时按不低于 1.5 倍；休息日未安排补休按不低于 2 倍；法定节假日按不低于 3 倍。系统会自动按法定下限兜底。</p>
+    </div>
+  `;
+}
+
+function renderHolidayRuleCard() {
+  const sample = getHolidayInfo(`${ui.year}-01-01`) || getHolidayInfo("2026-01-01");
+  return `
+    <div class="holiday-card">
+      <div>
+        <span>节假日识别</span>
+        <strong>${sample ? "已接入国务院 2026 调休表" : "按每周工作日判断"}</strong>
+      </div>
+      <p>${sample ? "法定节假日、休息日和调休上班会覆盖上方每周工作日设置；批量生成也会自动跳过放假日期。" : "当前年份未内置国务院放假表，会使用上方勾选的每周工作日。"}</p>
     </div>
   `;
 }
@@ -1115,9 +1176,10 @@ function applyPresetToForm(presetId) {
   if (!form) return;
   const preset = getShiftPreset(state.settings, presetId);
   if (!preset) return;
+  const date = form.elements.date.value || ui.selectedDate;
   const entry = buildEntryFromShiftPreset(form.elements.date.value || ui.selectedDate, preset, {
     settings: state.settings,
-    dayType: preset.dayType || inferDayType(ui.selectedDate, state.settings)
+    dayType: preset.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings)
   });
   form.elements.recordMode.value = entry.recordMode;
   form.setAttribute("data-record-mode", entry.recordMode);
@@ -1177,7 +1239,7 @@ function addAutoAdjustment(date, notice = "") {
 
 function bulkGenerateMonth() {
   const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings.workweek);
+  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings);
   const existing = new Set(state.entries.map((entry) => entry.date));
   let count = 0;
   for (const date of dates) {
@@ -1272,13 +1334,13 @@ function seedDemoData() {
   });
 }
 
-function workDatesForMonth(year, monthIndex, workweek = []) {
+function workDatesForMonth(year, monthIndex, settings = state.settings) {
   const days = new Date(year, monthIndex + 1, 0).getDate();
-  const enabled = new Set((workweek || []).map(Number));
   const dates = [];
   for (let day = 1; day <= days; day += 1) {
     const date = new Date(year, monthIndex, day);
-    if (enabled.has(date.getDay())) dates.push(formatDate(date));
+    const dateText = formatDate(date);
+    if (isWorkday(dateText, settings)) dates.push(dateText);
   }
   return dates;
 }
@@ -1421,6 +1483,7 @@ function renderPresetEditor(preset, index) {
       ${field("名称", `<input name="shiftPresets.${index}.name" type="text" value="${escapeAttr(preset.name)}" maxlength="18">`)}
       <input type="hidden" name="shiftPresets.${index}.id" value="${escapeAttr(preset.id)}">
       ${field("方式", `<select name="shiftPresets.${index}.recordMode">${option(RECORD_MODES.TIME, "时间", preset.recordMode)}${option(RECORD_MODES.HOURS, "工时", preset.recordMode)}</select>`)}
+      ${field("日期类型", `<select name="shiftPresets.${index}.dayType">${option("workday", "自动/工作日", preset.dayType)}${option("restday", "休息日", preset.dayType)}${option("holiday", "法定假日", preset.dayType)}</select>`)}
       ${field("上班", `<input name="shiftPresets.${index}.startTime" type="time" value="${escapeAttr(preset.startTime)}">`)}
       ${field("下班", `<input name="shiftPresets.${index}.endTime" type="time" value="${escapeAttr(preset.endTime)}">`)}
       ${field("休息", `<input name="shiftPresets.${index}.breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(preset.breakMinutes)}">`)}
@@ -1498,7 +1561,8 @@ function viewTitle(view) {
 
 function selectedDateLabel(date) {
   const parsed = new Date(`${date}T00:00:00`);
-  return `${date} 周${WEEKDAYS[parsed.getDay()]}`;
+  const holiday = getHolidayInfo(date);
+  return `${date} 周${WEEKDAYS[parsed.getDay()]}${holiday ? ` · ${holiday.name}` : ""}`;
 }
 
 function money(value) {

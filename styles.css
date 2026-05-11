@@ -256,9 +256,13 @@ h3 {
 .readiness span,
 .insight-panel span,
 .insight-panel p,
+.holiday-card span,
+.holiday-card p,
 .bulk-panel span,
 .preset-grid span,
-.command-strip span {
+.preset-grid small,
+.command-strip span,
+.command-context span {
   color: var(--muted);
 }
 
@@ -311,11 +315,12 @@ h3 {
 
 .command-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
 
+.command-context,
 .command-strip button {
   min-height: 58px;
   border: 1px solid var(--line);
@@ -328,18 +333,35 @@ h3 {
   text-align: left;
 }
 
-.command-strip button:first-child {
+.command-context {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 46px;
+  border-color: rgba(23, 107, 91, 0.18);
+  background: #f8fbfa;
+}
+
+.command-strip button.is-primary {
+  grid-column: 1 / -1;
   border-color: rgba(23, 107, 91, 0.35);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
+.command-context strong,
 .command-strip strong,
-.command-strip span {
+.command-strip span,
+.command-context span {
   display: block;
 }
 
-.command-strip span {
+.command-context strong {
+  color: var(--ink);
+}
+
+.command-strip span,
+.command-context span {
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
@@ -418,14 +440,60 @@ h3 {
   background: var(--accent-2);
 }
 
+.day-cell.is-restday:not(.has-work) {
+  background: #f8fafb;
+}
+
+.day-cell.is-holiday {
+  border-color: rgba(191, 111, 47, 0.32);
+  background: #fff9ed;
+}
+
+.day-cell.is-adjusted {
+  border-style: dashed;
+}
+
 .day-number,
 .day-hours,
-.day-pay {
+.day-pay,
+.day-marker,
+.day-note {
   display: block;
 }
 
 .day-number {
   font-weight: 800;
+}
+
+.day-marker {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 24px;
+  padding: 2px 5px;
+  border: 1px solid rgba(105, 119, 115, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.day-cell.is-holiday .day-marker {
+  border-color: rgba(191, 111, 47, 0.24);
+  color: var(--accent-2);
+}
+
+.day-note {
+  margin-top: 3px;
+  min-height: 15px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .day-hours {
@@ -443,6 +511,33 @@ h3 {
 .tool-form {
   display: grid;
   gap: 14px;
+}
+
+.record-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(23, 107, 91, 0.2);
+  border-radius: 8px;
+  background: #f4fbf8;
+}
+
+.record-form-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.record-form-head span,
+.record-form-head small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.record-form-head small {
+  text-align: right;
 }
 
 .day-status {
@@ -507,13 +602,21 @@ h3 {
 }
 
 .preset-grid strong,
-.preset-grid span {
+.preset-grid span,
+.preset-grid small {
   display: block;
 }
 
 .preset-grid span {
   margin-top: 4px;
   font-size: 12px;
+}
+
+.preset-grid small {
+  margin-top: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .form-grid {
@@ -565,6 +668,11 @@ button:focus-visible {
   background: var(--surface-2);
 }
 
+.segmented.compact {
+  grid-template-columns: repeat(3, 1fr);
+  min-height: 42px;
+}
+
 .segmented label {
   position: relative;
 }
@@ -600,6 +708,24 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.form-footer-strong {
+  position: sticky;
+  bottom: 86px;
+  z-index: 3;
+  margin-top: 2px;
+  padding: 10px;
+  border: 1px solid rgba(23, 107, 91, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 24px rgba(31, 50, 56, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.submit-button {
+  min-width: 132px;
+  min-height: 46px;
 }
 
 output {
@@ -767,7 +893,8 @@ output {
 
 .bulk-panel,
 .insight-panel,
-.law-card {
+.law-card,
+.holiday-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -781,7 +908,8 @@ output {
 
 .bulk-panel div,
 .insight-panel div,
-.law-card div {
+.law-card div,
+.holiday-card div {
   display: grid;
   gap: 4px;
 }
@@ -790,19 +918,23 @@ output {
 .insight-panel span,
 .insight-panel p,
 .law-card span,
-.law-card p {
+.law-card p,
+.holiday-card span,
+.holiday-card p {
   font-size: 13px;
 }
 
 .insight-panel,
-.law-card {
+.law-card,
+.holiday-card {
   align-items: flex-start;
   border-color: rgba(23, 107, 91, 0.25);
   background: #f4fbf8;
 }
 
 .insight-panel p,
-.law-card p {
+.law-card p,
+.holiday-card p {
   max-width: 360px;
   margin: 0;
   line-height: 1.5;
@@ -858,7 +990,7 @@ output {
 
 .preset-row {
   display: grid;
-  grid-template-columns: 1.1fr 0.8fr repeat(4, minmax(0, 0.8fr));
+  grid-template-columns: 1.05fr 0.75fr 0.95fr repeat(4, minmax(0, 0.78fr));
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--line);

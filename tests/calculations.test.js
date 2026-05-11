@@ -13,6 +13,9 @@ import {
   calculateTimeHours,
   buildCalendarDays,
   buildEntryFromShiftPreset,
+  getHolidayInfo,
+  inferDayType,
+  isWorkday,
   mergeSettings,
   normalizeEntry,
   overtimeMultiplierForDay,
@@ -336,6 +339,40 @@ test("shift presets infer rest days from workweek when preset is a normal workda
   assert.equal(entry.overtimeHours, 8);
 });
 
+test("state council holiday schedule overrides weekends and workweek", () => {
+  const settings = mergeSettings({ workweek: [1, 2, 3, 4, 5] });
+
+  assert.equal(getHolidayInfo("2026-10-01").name, "国庆节");
+  assert.equal(inferDayType("2026-10-01", settings), "holiday");
+  assert.equal(inferDayType("2026-10-04", settings), "restday");
+  assert.equal(inferDayType("2026-10-10", settings), "workday");
+  assert.equal(isWorkday("2026-10-10", settings), true);
+  assert.equal(isWorkday("2026-10-04", settings), false);
+  assert.equal(mergeSettings({
+    shiftPresets: [{ id: "rest", name: "休息日加班" }]
+  }).shiftPresets[0].dayType, "restday");
+});
+
+test("holiday inferred shift entries use legal holiday overtime pay", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.HOURLY,
+    hourlyRate: 30,
+    workweek: [1, 2, 3, 4, 5]
+  });
+  const entry = buildEntryFromShiftPreset("2026-05-01", {
+    id: "day",
+    name: "白班",
+    startTime: "09:00",
+    endTime: "18:00",
+    breakMinutes: 60
+  }, { settings });
+
+  assert.equal(entry.dayType, "holiday");
+  assert.equal(entry.regularHours, 0);
+  assert.equal(entry.overtimeHours, 8);
+  assert.equal(calculateEntryPay(entry, settings).totalPay, 720);
+});
+
 test("salary insights report missing configuration prompts", () => {
   const insights = deriveSalaryInsights({
     salaryMode: SALARY_MODES.REGULAR_OVERTIME,
@@ -392,4 +429,5 @@ test("calendar builder returns full weeks", () => {
   assert.equal(days.length % 7, 0);
   assert.equal(days.some((day) => day.date === "2026-05-01" && day.inMonth), true);
   assert.equal(days.some((day) => day.date === "2026-06-01" && !day.inMonth), true);
+  assert.equal(days.find((day) => day.date === "2026-05-01").holiday.dayType, "holiday");
 });

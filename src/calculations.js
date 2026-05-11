@@ -112,6 +112,75 @@ export const DEFAULT_SETTINGS = {
   }
 };
 
+export const HOLIDAY_SCHEDULES = {
+  2026: {
+    source: "国务院办公厅关于2026年部分节假日安排的通知",
+    sourceUrl: "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm",
+    days: {
+      "2026-01-01": { dayType: "holiday", name: "元旦", marker: "法定" },
+      "2026-01-02": { dayType: "restday", name: "元旦假期", marker: "休" },
+      "2026-01-03": { dayType: "restday", name: "元旦假期", marker: "休" },
+      "2026-01-04": { dayType: "workday", name: "调休上班", marker: "班", adjusted: true },
+
+      "2026-02-14": { dayType: "workday", name: "春节调休上班", marker: "班", adjusted: true },
+      "2026-02-15": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2026-02-16": { dayType: "holiday", name: "除夕", marker: "法定" },
+      "2026-02-17": { dayType: "holiday", name: "春节", marker: "法定" },
+      "2026-02-18": { dayType: "holiday", name: "春节", marker: "法定" },
+      "2026-02-19": { dayType: "holiday", name: "春节", marker: "法定" },
+      "2026-02-20": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2026-02-21": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2026-02-22": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2026-02-23": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2026-02-28": { dayType: "workday", name: "春节调休上班", marker: "班", adjusted: true },
+
+      "2026-04-04": { dayType: "restday", name: "清明假期", marker: "休" },
+      "2026-04-05": { dayType: "holiday", name: "清明节", marker: "法定" },
+      "2026-04-06": { dayType: "restday", name: "清明补休", marker: "休" },
+
+      "2026-05-01": { dayType: "holiday", name: "劳动节", marker: "法定" },
+      "2026-05-02": { dayType: "holiday", name: "劳动节", marker: "法定" },
+      "2026-05-03": { dayType: "restday", name: "劳动节假期", marker: "休" },
+      "2026-05-04": { dayType: "restday", name: "劳动节假期", marker: "休" },
+      "2026-05-05": { dayType: "restday", name: "劳动节假期", marker: "休" },
+      "2026-05-09": { dayType: "workday", name: "劳动节调休上班", marker: "班", adjusted: true },
+
+      "2026-06-19": { dayType: "holiday", name: "端午节", marker: "法定" },
+      "2026-06-20": { dayType: "restday", name: "端午假期", marker: "休" },
+      "2026-06-21": { dayType: "restday", name: "端午假期", marker: "休" },
+
+      "2026-09-20": { dayType: "workday", name: "国庆调休上班", marker: "班", adjusted: true },
+      "2026-09-25": { dayType: "holiday", name: "中秋节", marker: "法定" },
+      "2026-09-26": { dayType: "restday", name: "中秋假期", marker: "休" },
+      "2026-09-27": { dayType: "restday", name: "中秋假期", marker: "休" },
+
+      "2026-10-01": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2026-10-02": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2026-10-03": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2026-10-04": { dayType: "restday", name: "国庆假期", marker: "休" },
+      "2026-10-05": { dayType: "restday", name: "国庆假期", marker: "休" },
+      "2026-10-06": { dayType: "restday", name: "国庆假期", marker: "休" },
+      "2026-10-07": { dayType: "restday", name: "国庆假期", marker: "休" },
+      "2026-10-10": { dayType: "workday", name: "国庆调休上班", marker: "班", adjusted: true }
+    }
+  }
+};
+
+export function getHolidayInfo(date) {
+  const dateText = String(date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const year = yearFromDate(dateText);
+  const schedule = HOLIDAY_SCHEDULES[year];
+  const info = schedule?.days?.[dateText];
+  if (!info) return null;
+  return {
+    ...info,
+    date: dateText,
+    source: schedule.source,
+    sourceUrl: schedule.sourceUrl
+  };
+}
+
 export const ANNUAL_TAX_BRACKETS = [
   { limit: 36000, rate: 0.03, quickDeduction: 0 },
   { limit: 144000, rate: 0.1, quickDeduction: 2520 },
@@ -154,7 +223,7 @@ export function normalizeShiftPresets(presets = DEFAULT_SETTINGS.shiftPresets) {
     id: preset.id || `preset-${index + 1}`,
     name: preset.name || `班次${index + 1}`,
     recordMode: preset.recordMode || RECORD_MODES.TIME,
-    dayType: preset.dayType || "workday",
+    dayType: normalizePresetDayType(preset),
     startTime: preset.startTime || "09:00",
     endTime: preset.endTime || "18:00",
     breakMinutes: clampNumberMax(preset.breakMinutes, 0, WORK_LIMITS.maxBreakMinutes),
@@ -162,6 +231,18 @@ export function normalizeShiftPresets(presets = DEFAULT_SETTINGS.shiftPresets) {
     overtimeHours: clampNumberMax(preset.overtimeHours, 0, WORK_LIMITS.maxOvertimeHours),
     totalHours: clampNumberMax(preset.totalHours, 0, WORK_LIMITS.maxEntryHours)
   }));
+}
+
+function inferPresetDayType(preset = {}) {
+  if (preset.id === "rest" || /休息|周末/.test(String(preset.name || ""))) return "restday";
+  if (/节假|法定/.test(String(preset.name || ""))) return "holiday";
+  return "workday";
+}
+
+function normalizePresetDayType(preset = {}) {
+  const inferred = inferPresetDayType(preset);
+  if (preset.dayType && !(preset.dayType === "workday" && inferred !== "workday")) return preset.dayType;
+  return inferred;
 }
 
 export function getShiftPreset(settings = DEFAULT_SETTINGS, presetId) {
@@ -174,8 +255,14 @@ export function getShiftPreset(settings = DEFAULT_SETTINGS, presetId) {
 export function inferDayType(date, settings = DEFAULT_SETTINGS) {
   const merged = mergeSettings(settings);
   if (!merged.autoDayType || !date) return "workday";
+  const holidayInfo = getHolidayInfo(date);
+  if (holidayInfo) return holidayInfo.dayType;
   const weekday = new Date(`${date}T00:00:00`).getDay();
   return merged.workweek.includes(weekday) ? "workday" : "restday";
+}
+
+export function isWorkday(date, settings = DEFAULT_SETTINGS) {
+  return inferDayType(date, settings) === "workday";
 }
 
 export function deriveSalaryInsights(settings = DEFAULT_SETTINGS) {
@@ -748,18 +835,21 @@ export function buildCalendarDays(year, monthIndex) {
   for (let i = startDay - 1; i >= 0; i -= 1) {
     const day = previousMonthDays - i;
     const date = new Date(year, monthIndex - 1, day);
-    cells.push({ date: formatDate(date), inMonth: false });
+    const dateText = formatDate(date);
+    cells.push({ date: dateText, inMonth: false, holiday: getHolidayInfo(dateText) });
   }
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = new Date(year, monthIndex, day);
-    cells.push({ date: formatDate(date), inMonth: true });
+    const dateText = formatDate(date);
+    cells.push({ date: dateText, inMonth: true, holiday: getHolidayInfo(dateText) });
   }
 
   let trailingDay = 1;
   while (cells.length % 7 !== 0) {
     const date = new Date(year, monthIndex + 1, trailingDay);
-    cells.push({ date: formatDate(date), inMonth: false });
+    const dateText = formatDate(date);
+    cells.push({ date: dateText, inMonth: false, holiday: getHolidayInfo(dateText) });
     trailingDay += 1;
   }
 
