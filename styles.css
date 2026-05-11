@@ -766,7 +766,8 @@ output {
 }
 
 .bulk-panel,
-.insight-panel {
+.insight-panel,
+.law-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -779,27 +780,75 @@ output {
 }
 
 .bulk-panel div,
-.insight-panel div {
+.insight-panel div,
+.law-card div {
   display: grid;
   gap: 4px;
 }
 
 .bulk-panel span,
 .insight-panel span,
-.insight-panel p {
+.insight-panel p,
+.law-card span,
+.law-card p {
   font-size: 13px;
 }
 
-.insight-panel {
+.insight-panel,
+.law-card {
   align-items: flex-start;
   border-color: rgba(23, 107, 91, 0.25);
   background: #f4fbf8;
 }
 
-.insight-panel p {
+.insight-panel p,
+.law-card p {
   max-width: 360px;
   margin: 0;
   line-height: 1.5;
+}
+
+.law-card {
+  background: #fff9ed;
+  border-color: rgba(191, 111, 47, 0.24);
+}
+
+.law-card strong {
+  color: var(--accent-2);
+}
+
+.law-panel {
+  margin-top: 18px;
+}
+
+.law-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.law-grid div {
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.law-grid span,
+.law-panel li {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.law-grid strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.law-panel ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
 }
 
 .preset-editor {
@@ -979,6 +1028,14 @@ output {
   }
 
   .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .law-card {
+    flex-direction: column;
+  }
+
+  .law-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

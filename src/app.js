@@ -1,9 +1,11 @@
 import {
   DEFAULT_SETTINGS,
+  LEGAL_RULES,
   RECORD_MODES,
   SALARY_MODES,
   WORK_LIMITS,
   buildCalendarDays,
+  calculateComplianceSummary,
   buildEntryFromShiftPreset,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
@@ -16,6 +18,7 @@ import {
   mergeSettings,
   monthIndexFromDate,
   normalizeEntry,
+  overtimeMultiplierForDay,
   round2,
   summarizeYear,
   validateEntry,
@@ -65,7 +68,7 @@ const DAY_TYPE_LABELS = {
 };
 const MISSING_LABELS = {
   baseSalary: "底薪",
-  standardMonthlyHours: "月标准小时",
+  standardMonthlyHours: "月计薪小时",
   regularHourlyRate: "正班时薪",
   baseOvertimeRate: "加班基数",
   comprehensiveHourlyRate: "综合工时时薪",
@@ -266,6 +269,15 @@ document.addEventListener("change", async (event) => {
     updateEntryPreview();
   }
 
+  if (event.target.name === "salaryMode" && event.target.closest("#settings-form")) {
+    state.settings = limitSettings({
+      ...state.settings,
+      salaryMode: event.target.value
+    });
+    render();
+    return;
+  }
+
   if (event.target.id === "import-file" && event.target.files?.[0]) {
     try {
       const text = await event.target.files[0].text();
@@ -373,24 +385,33 @@ function renderReadiness() {
   const insights = deriveSalaryInsights(state.settings);
   const missing = insights.missingConfig.map((key) => MISSING_LABELS[key] || key);
   const integrityIssues = findEntryIntegrityIssues();
+  const compliance = calculateComplianceSummary(state.entries, state.settings, ui.year, ui.monthIndex);
   const backupText = state.backup?.lastExportedAt
     ? `最近备份 ${formatDateTime(state.backup.lastExportedAt)}`
     : "尚未备份";
   const derivedText = [
     insights.isDerived.regularHourlyRate ? `正班时薪 ${money(insights.regularHourlyRate)} 自动推算` : "",
-    insights.isDerived.baseOvertimeRate ? `加班基数 ${money(insights.baseOvertimeRate)} 自动推算` : ""
+    insights.isDerived.baseOvertimeRate ? `加班基数 ${money(insights.baseOvertimeRate)} 自动推算` : "",
+    insights.isDerived.hourlyRate ? `小时工时薪 ${money(insights.rates.hourlyRate)} 自动推算` : "",
+    insights.isDerived.comprehensiveHourlyRate ? `综合工时时薪 ${money(insights.rates.comprehensiveHourlyRate)} 自动推算` : ""
   ].filter(Boolean).join("，");
-  const needsAttention = missing.length || integrityIssues.length;
+  const needsAttention = missing.length || integrityIssues.length || compliance.warnings.length;
   const issueDates = integrityIssues.slice(0, 3).map((item) => item.date.slice(5)).join("、");
+  const title = integrityIssues.length
+    ? `发现 ${integrityIssues.length} 天工时异常`
+    : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : (compliance.warnings.length ? "存在加班合规提醒" : "工资规则已就绪"));
+  const detail = integrityIssues.length
+    ? `${issueDates} 超过合理上限，请整理或编辑`
+    : (missing.length ? missing.join("、") : (compliance.warnings[0] || derivedText || "工作日加班按不低于 1.5 倍计算"));
   return `
     <section class="readiness ${needsAttention ? "needs-attention" : ""}">
       <div>
-        <strong>${integrityIssues.length ? `发现 ${integrityIssues.length} 天工时异常` : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : "工资规则已就绪")}</strong>
-        <span>${integrityIssues.length ? `${issueDates} 超过合理上限，请整理或编辑` : (missing.length ? missing.join("、") : (derivedText || "每天记时间，系统会自动拆分正班和加班"))}</span>
+        <strong>${title}</strong>
+        <span>${detail}</span>
       </div>
       <div>
         <span>${backupText}</span>
-        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="settings">规则</button>`}
+        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="${compliance.warnings.length ? "reports" : "settings"}">${compliance.warnings.length ? "查看" : "规则"}</button>`}
       </div>
     </section>
   `;
@@ -452,6 +473,7 @@ function renderDayStatus(entries) {
   const text = entries.length
     ? `${entries.length} 条记录，正班 ${regularHours}h，加班 ${overtimeHours}h`
     : "当天还没有工时，先套班次或直接填时间";
+  const ruleText = entries.length ? payRuleTextForEntries(entries) : "工作日加班按 1.5 倍";
   return `
     <div class="day-status ${isWarning ? "is-warning" : ""}">
       <div>
@@ -460,7 +482,7 @@ function renderDayStatus(entries) {
       </div>
       <div>
         <b>${money(pay)}</b>
-        <span>当天上限 ${WORK_LIMITS.maxDayHours}h</span>
+        <span>${ruleText} · 上限 ${WORK_LIMITS.maxDayHours}h</span>
       </div>
     </div>
   `;
@@ -486,6 +508,14 @@ function renderDayCell(day, entries, adjustments) {
       <span class="day-pay">${pay ? money(pay) : ""}</span>
     </button>
   `;
+}
+
+function payRuleTextForEntries(entries) {
+  const hasHoliday = entries.some((entry) => normalizeEntry(entry, state.settings).dayType === "holiday");
+  const hasRestDay = entries.some((entry) => normalizeEntry(entry, state.settings).dayType === "restday");
+  if (hasHoliday) return `法定假日 ${overtimeMultiplierForDay("holiday", state.settings)} 倍`;
+  if (hasRestDay) return `休息日 ${overtimeMultiplierForDay("restday", state.settings)} 倍`;
+  return `加班 ${overtimeMultiplierForDay("workday", state.settings)} 倍`;
 }
 
 function renderEntryForm() {
@@ -587,6 +617,7 @@ function renderEntryItem(entry) {
       <div>
         <strong>${time}</strong>
         <span>${DAY_TYPE_LABELS[normalized.dayType]} · ${normalized.totalHours}h · ${money(pay.totalPay)}</span>
+        <small>正班 ${money(pay.regularPay)} · 加班 ${money(pay.overtimePay)} · 倍率 ${overtimeMultiplierForDay(normalized.dayType, state.settings)}x</small>
         ${entry.target ? `<small>目标：${escapeHtml(entry.target)}</small>` : ""}
         ${entry.note ? `<small>${escapeHtml(entry.note)}</small>` : ""}
       </div>
@@ -693,6 +724,7 @@ function renderAdjustmentForm() {
 function renderReportsView() {
   const yearSummary = summarizeYear(state.entries, state.adjustments, state.settings, ui.year);
   const selected = yearSummary[ui.monthIndex];
+  const compliance = calculateComplianceSummary(state.entries, state.settings, ui.year, ui.monthIndex);
   const maxIncome = Math.max(1, ...yearSummary.map((item) => item.netIncome));
   const maxHours = Math.max(1, ...yearSummary.map((item) => item.totalHours));
   const incomeGoal = Number(state.settings.goals.monthlyIncome) || 0;
@@ -761,9 +793,32 @@ function renderReportsView() {
           ${goal("收入目标", selected.netIncome, incomeGoal, money(selected.netIncome), money(incomeGoal))}
           ${goal("工时目标", selected.totalHours, hoursGoal, `${selected.totalHours}h`, `${hoursGoal}h`)}
         </div>
+        ${renderCompliancePanel(compliance)}
       </section>
     </div>
   `;
+}
+
+function renderCompliancePanel(compliance) {
+  const warnings = compliance.warnings.length
+    ? compliance.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
+    : `<li>本月未触发加班风险提醒</li>`;
+  return `
+    <div class="law-panel">
+      <h3>法定口径校验</h3>
+      <div class="law-grid">
+        ${lawMetric("工作日", `${LEGAL_RULES.workdayOvertimeMultiplier}x`)}
+        ${lawMetric("休息日", `${LEGAL_RULES.restDayOvertimeMultiplier}x`)}
+        ${lawMetric("法定假日", `${LEGAL_RULES.holidayOvertimeMultiplier}x`)}
+        ${lawMetric("月加班", `${compliance.monthlyOvertimeHours}h / ${LEGAL_RULES.monthlyOvertimeLimit}h`)}
+      </div>
+      <ul>${warnings}</ul>
+    </div>
+  `;
+}
+
+function lawMetric(label, value) {
+  return `<div><span>${label}</span><strong>${value}</strong></div>`;
 }
 
 function renderSettingsView() {
@@ -783,10 +838,11 @@ function renderSettingsView() {
           <div class="insight-panel">
             <div>
               <span>自动推算</span>
-              <strong>正班 ${money(insights.regularHourlyRate)} / 加班基数 ${money(insights.baseOvertimeRate)}</strong>
+              <strong>正班 ${money(insights.regularHourlyRate)} / 小时 ${money(insights.rates.hourlyRate)}</strong>
             </div>
-            <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : "底薪、月标准小时和倍率会联动计算，留空的时薪会自动推导。"}</p>
+            <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `按 ${LEGAL_RULES.paidDaysPerMonth} 天计薪，小时工资 = 月工资 ÷ ${LEGAL_RULES.wageHourlyDivisor}。`}</p>
           </div>
+          ${renderLegalRuleCard()}
           ${field("薪资方式", `
             <select name="salaryMode">
               ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
@@ -796,20 +852,20 @@ function renderSettingsView() {
             </select>
           `)}
           <div class="form-grid">
-            ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
+            ${modeFields.includes("normalHoursPerDay") ? numberField(`每日正班小时（法定 ${LEGAL_RULES.dailyStandardHours}h）`, "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
             ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
-            ${modeFields.includes("standardMonthlyHours") ? numberField("月标准小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+            ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时（21.75×8）", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
             ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
-            ${modeFields.includes("hourlyRate") ? numberField("小时工时薪", "hourlyRate", settings.hourlyRate, 0.01) : ""}
+            ${modeFields.includes("hourlyRate") ? numberField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate, 0.01) : ""}
             ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
             ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
-            ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+            ${modeFields.includes("comprehensiveTargetHours") ? numberField(`综合目标小时（默认 ${LEGAL_RULES.standardMonthlyWorkHours}）`, "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
           </div>
           <div class="form-grid">
-            ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
-            ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
-            ${numberField("法定节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
-            ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
+            ${numberField("工作日加班倍率（不低于1.5）", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { min: LEGAL_RULES.workdayOvertimeMultiplier, max: 5 })}
+            ${numberField("休息日倍率（未补休不低于2）", "restDayMultiplier", settings.restDayMultiplier, 0.05, { min: LEGAL_RULES.restDayOvertimeMultiplier, max: 5 })}
+            ${numberField("法定节假日倍率（不低于3）", "holidayMultiplier", settings.holidayMultiplier, 0.05, { min: LEGAL_RULES.holidayOvertimeMultiplier, max: 5 })}
+            ${numberField("综合超时倍率（不低于1.5）", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { min: LEGAL_RULES.workdayOvertimeMultiplier, max: 5 })}
           </div>
           <h3>目标</h3>
           <div class="form-grid">
@@ -860,6 +916,18 @@ function renderSettingsView() {
           </div>
         </form>
       </section>
+    </div>
+  `;
+}
+
+function renderLegalRuleCard() {
+  return `
+    <div class="law-card">
+      <div>
+        <span>加班工资</span>
+        <strong>1.5x / 2x / 3x</strong>
+      </div>
+      <p>工作日延长工时按不低于 1.5 倍；休息日未安排补休按不低于 2 倍；法定节假日按不低于 3 倍。系统会自动按法定下限兜底。</p>
     </div>
   `;
 }
@@ -924,7 +992,7 @@ function saveEntryObject(entry, notice, options = {}) {
   ui.monthIndex = monthIndexFromDate(normalizedEntry.date);
   ui.editingEntryId = "";
   ui.entryError = "";
-  persist(validation.warnings[0] || notice);
+  persist(validation.warnings[0] ? `${notice}，${validation.warnings[0]}` : notice);
   render();
   return true;
 }
@@ -1320,8 +1388,8 @@ function newerEntry(left, right) {
 }
 
 function settingsFieldsForMode(mode) {
-  if (mode === SALARY_MODES.HOURLY) return ["hourlyRate"];
-  if (mode === SALARY_MODES.COMPREHENSIVE) return ["comprehensiveHourlyRate", "comprehensiveTargetHours"];
+  if (mode === SALARY_MODES.HOURLY) return ["baseSalary", "standardMonthlyHours", "hourlyRate"];
+  if (mode === SALARY_MODES.COMPREHENSIVE) return ["baseSalary", "standardMonthlyHours", "comprehensiveHourlyRate", "comprehensiveTargetHours"];
   if (mode === SALARY_MODES.BASE_OVERTIME) return ["baseSalary", "standardMonthlyHours", "baseOvertimeRate"];
   return ["normalHoursPerDay", "baseSalary", "standardMonthlyHours", "regularHourlyRate"];
 }
@@ -1332,10 +1400,10 @@ function limitSettings(settings) {
   next.standardMonthlyHours = boundedNumber(next.standardMonthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
   next.comprehensiveTargetHours = boundedNumber(next.comprehensiveTargetHours, 0, WORK_LIMITS.maxMonthlyHours);
   next.goals.monthlyHours = boundedNumber(next.goals.monthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
-  next.overtimeMultiplier = boundedNumber(next.overtimeMultiplier, 0, 5);
-  next.restDayMultiplier = boundedNumber(next.restDayMultiplier, 0, 5);
-  next.holidayMultiplier = boundedNumber(next.holidayMultiplier, 0, 5);
-  next.comprehensiveOvertimeMultiplier = boundedNumber(next.comprehensiveOvertimeMultiplier, 0, 5);
+  next.overtimeMultiplier = boundedNumber(next.overtimeMultiplier, LEGAL_RULES.workdayOvertimeMultiplier, 5);
+  next.restDayMultiplier = boundedNumber(next.restDayMultiplier, LEGAL_RULES.restDayOvertimeMultiplier, 5);
+  next.holidayMultiplier = boundedNumber(next.holidayMultiplier, LEGAL_RULES.holidayOvertimeMultiplier, 5);
+  next.comprehensiveOvertimeMultiplier = boundedNumber(next.comprehensiveOvertimeMultiplier, LEGAL_RULES.workdayOvertimeMultiplier, 5);
   next.tax.deductionPercent = boundedNumber(next.tax.deductionPercent, 0, 100);
   next.tax.socialSecurityPercent = boundedNumber(next.tax.socialSecurityPercent, 0, 100);
   return next;

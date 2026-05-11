@@ -1,18 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  LEGAL_RULES,
   RECORD_MODES,
   SALARY_MODES,
   WORK_LIMITS,
   calculateAnnualTax,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
+  calculateComplianceSummary,
   calculateMonthlyPayroll,
   calculateTimeHours,
   buildCalendarDays,
   buildEntryFromShiftPreset,
   mergeSettings,
   normalizeEntry,
+  overtimeMultiplierForDay,
   deriveSalaryInsights,
   validateEntry
 } from "../src/calculations.js";
@@ -150,15 +153,58 @@ test("comprehensive mode pays excess hours and holiday hours as overtime", () =>
   assert.equal(payroll.overtimePay, 360);
 });
 
-test("hourly mode pays all hours at hourly rate", () => {
+test("hourly mode pays regular hours and overtime premium by legal day type", () => {
   const settings = mergeSettings({ salaryMode: SALARY_MODES.HOURLY, hourlyRate: 32 });
   const pay = calculateEntryPay({
     date: "2026-05-03",
     recordMode: "hours",
     dayType: "workday",
-    totalHours: 7.5
+    regularHours: 8,
+    overtimeHours: 2,
+    totalHours: 10
   }, settings);
-  assert.equal(pay.totalPay, 240);
+  assert.equal(pay.regularPay, 256);
+  assert.equal(pay.overtimePay, 96);
+  assert.equal(pay.totalPay, 352);
+
+  const restDayPay = calculateEntryPay({
+    date: "2026-05-03",
+    recordMode: "hours",
+    dayType: "restday",
+    totalHours: 6
+  }, settings);
+  assert.equal(restDayPay.regularPay, 0);
+  assert.equal(restDayPay.overtimePay, 384);
+  assert.equal(restDayPay.totalPay, 384);
+});
+
+test("configured overtime multipliers cannot drop below legal minimums", () => {
+  const settings = mergeSettings({
+    overtimeMultiplier: 1,
+    restDayMultiplier: 1,
+    holidayMultiplier: 1
+  });
+  assert.equal(overtimeMultiplierForDay("workday", settings), LEGAL_RULES.workdayOvertimeMultiplier);
+  assert.equal(overtimeMultiplierForDay("restday", settings), LEGAL_RULES.restDayOvertimeMultiplier);
+  assert.equal(overtimeMultiplierForDay("holiday", settings), LEGAL_RULES.holidayOvertimeMultiplier);
+});
+
+test("comprehensive mode derives hourly rate from monthly wage and uses legal overtime premium", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.COMPREHENSIVE,
+    baseSalary: 8700,
+    standardMonthlyHours: LEGAL_RULES.wageHourlyDivisor,
+    comprehensiveHourlyRate: 0,
+    comprehensiveTargetHours: 10,
+    comprehensiveOvertimeMultiplier: 1
+  });
+  const payroll = calculateMonthlyPayroll([
+    { date: "2026-05-01", recordMode: "hours", dayType: "workday", totalHours: 12 },
+    { date: "2026-05-02", recordMode: "hours", dayType: "holiday", totalHours: 2 }
+  ], [], settings, 2026, 4);
+  assert.equal(deriveSalaryInsights(settings).rates.comprehensiveHourlyRate, 50);
+  assert.equal(payroll.regularPay, 500);
+  assert.equal(payroll.overtimePay, 450);
 });
 
 test("manual hour records use regular plus overtime as the source of truth", () => {
@@ -222,6 +268,33 @@ test("entry validation checks daily aggregate limits", () => {
 
   assert.equal(result.valid, false);
   assert.match(result.errors.join(" "), /当天合计不能超过/);
+});
+
+test("entry validation and compliance summary warn when overtime exceeds legal guardrails", () => {
+  const settings = mergeSettings();
+  const warning = validateEntry({
+    id: "new",
+    date: "2026-05-06",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 4,
+    totalHours: 12
+  }, settings);
+  assert.equal(warning.valid, true);
+  assert.match(warning.warnings.join(" "), /超过 3 小时/);
+
+  const summary = calculateComplianceSummary(Array.from({ length: 10 }, (_, index) => ({
+    date: `2026-05-${String(index + 1).padStart(2, "0")}`,
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 4,
+    totalHours: 12
+  })), settings, 2026, 4);
+  assert.equal(summary.monthlyOvertimeHours, 40);
+  assert.match(summary.warnings.join(" "), /超过 36h/);
+  assert.equal(summary.dailyHardOvertimeDays.length, 10);
 });
 
 test("buildEntryFromShiftPreset supports defaults, rest days, and overnight shifts", () => {

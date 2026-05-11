@@ -10,10 +10,25 @@ export const RECORD_MODES = {
   HOURS: "hours"
 };
 
+export const LEGAL_RULES = {
+  dailyStandardHours: 8,
+  weeklyStandardHours: 44,
+  dailyOvertimeSoftLimit: 1,
+  dailyOvertimeHardLimit: 3,
+  monthlyOvertimeLimit: 36,
+  paidDaysPerMonth: 21.75,
+  wageHourlyDivisor: 174,
+  averageWorkDaysPerMonth: 20.67,
+  standardMonthlyWorkHours: 165.36,
+  workdayOvertimeMultiplier: 1.5,
+  restDayOvertimeMultiplier: 2,
+  holidayOvertimeMultiplier: 3
+};
+
 export const WORK_LIMITS = {
   maxEntryHours: 16,
   maxDayHours: 20,
-  maxRegularHours: 12,
+  maxRegularHours: LEGAL_RULES.dailyStandardHours,
   maxOvertimeHours: 12,
   maxBreakMinutes: 720,
   maxMonthlyHours: 360
@@ -22,18 +37,18 @@ export const WORK_LIMITS = {
 export const DEFAULT_SETTINGS = {
   currency: "CNY",
   salaryMode: SALARY_MODES.REGULAR_OVERTIME,
-  normalHoursPerDay: 8,
+  normalHoursPerDay: LEGAL_RULES.dailyStandardHours,
   regularHourlyRate: 0,
-  overtimeMultiplier: 1.5,
-  restDayMultiplier: 2,
-  holidayMultiplier: 3,
+  overtimeMultiplier: LEGAL_RULES.workdayOvertimeMultiplier,
+  restDayMultiplier: LEGAL_RULES.restDayOvertimeMultiplier,
+  holidayMultiplier: LEGAL_RULES.holidayOvertimeMultiplier,
   baseSalary: 6000,
-  standardMonthlyHours: 174,
+  standardMonthlyHours: LEGAL_RULES.wageHourlyDivisor,
   baseHourlyRate: 0,
   baseOvertimeRate: 0,
-  comprehensiveHourlyRate: 28,
-  comprehensiveTargetHours: 174,
-  comprehensiveOvertimeMultiplier: 1.5,
+  comprehensiveHourlyRate: 0,
+  comprehensiveTargetHours: LEGAL_RULES.standardMonthlyWorkHours,
+  comprehensiveOvertimeMultiplier: LEGAL_RULES.workdayOvertimeMultiplier,
   hourlyRate: 30,
   defaultPresetId: "day",
   workweek: [1, 2, 3, 4, 5],
@@ -166,18 +181,29 @@ export function inferDayType(date, settings = DEFAULT_SETTINGS) {
 export function deriveSalaryInsights(settings = DEFAULT_SETTINGS) {
   const merged = mergeSettings(settings);
   const baseSalary = clampNumber(merged.baseSalary, 0);
-  const standardMonthlyHours = clampNumber(merged.standardMonthlyHours, 0);
+  const standardMonthlyHours = clampNumber(merged.standardMonthlyHours, 0, LEGAL_RULES.wageHourlyDivisor);
   const canDeriveFromBase = baseSalary > 0 && standardMonthlyHours > 0;
   const derivedFromBase = canDeriveFromBase ? baseSalary / standardMonthlyHours : 0;
   const configuredBaseHourlyRate = clampNumber(merged.baseHourlyRate, 0);
   const configuredBaseOvertimeRate = clampNumber(merged.baseOvertimeRate, 0);
   const configuredRegularHourlyRate = clampNumber(merged.regularHourlyRate, 0);
+  const configuredComprehensiveHourlyRate = clampNumber(merged.comprehensiveHourlyRate, 0);
+  const configuredHourlyRate = clampNumber(merged.hourlyRate, 0);
   const baseHourlyRate = configuredBaseHourlyRate > 0 ? configuredBaseHourlyRate : derivedFromBase;
   const baseOvertimeRate = configuredBaseOvertimeRate > 0 ? configuredBaseOvertimeRate : baseHourlyRate;
   const regularHourlyRate = configuredRegularHourlyRate > 0 ? configuredRegularHourlyRate : derivedFromBase;
+  const comprehensiveHourlyRate = configuredComprehensiveHourlyRate > 0 ? configuredComprehensiveHourlyRate : derivedFromBase;
+  const hourlyRate = configuredHourlyRate > 0 ? configuredHourlyRate : derivedFromBase;
   const missingConfig = [];
 
-  if (!canDeriveFromBase) {
+  const needsBaseFallback = (
+    (merged.salaryMode === SALARY_MODES.REGULAR_OVERTIME && configuredRegularHourlyRate <= 0)
+    || (merged.salaryMode === SALARY_MODES.BASE_OVERTIME && configuredBaseOvertimeRate <= 0)
+    || (merged.salaryMode === SALARY_MODES.COMPREHENSIVE && configuredComprehensiveHourlyRate <= 0)
+    || (merged.salaryMode === SALARY_MODES.HOURLY && configuredHourlyRate <= 0)
+  );
+
+  if (needsBaseFallback && !canDeriveFromBase) {
     if (baseSalary <= 0) missingConfig.push("baseSalary");
     if (standardMonthlyHours <= 0) missingConfig.push("standardMonthlyHours");
   }
@@ -190,11 +216,11 @@ export function deriveSalaryInsights(settings = DEFAULT_SETTINGS) {
     missingConfig.push("baseOvertimeRate");
   }
 
-  if (merged.salaryMode === SALARY_MODES.COMPREHENSIVE && clampNumber(merged.comprehensiveHourlyRate, 0) <= 0) {
+  if (merged.salaryMode === SALARY_MODES.COMPREHENSIVE && comprehensiveHourlyRate <= 0) {
     missingConfig.push("comprehensiveHourlyRate");
   }
 
-  if (merged.salaryMode === SALARY_MODES.HOURLY && clampNumber(merged.hourlyRate, 0) <= 0) {
+  if (merged.salaryMode === SALARY_MODES.HOURLY && hourlyRate <= 0) {
     missingConfig.push("hourlyRate");
   }
 
@@ -211,13 +237,15 @@ export function deriveSalaryInsights(settings = DEFAULT_SETTINGS) {
       baseHourlyRate: round2(baseHourlyRate),
       baseOvertimeRate: round2(baseOvertimeRate),
       regularHourlyRate: round2(regularHourlyRate),
-      hourlyRate: round2(clampNumber(merged.hourlyRate, 0)),
-      comprehensiveHourlyRate: round2(clampNumber(merged.comprehensiveHourlyRate, 0))
+      hourlyRate: round2(hourlyRate),
+      comprehensiveHourlyRate: round2(comprehensiveHourlyRate)
     },
     isDerived: {
       baseHourlyRate: configuredBaseHourlyRate <= 0 && baseHourlyRate > 0,
       baseOvertimeRate: configuredBaseOvertimeRate <= 0 && baseOvertimeRate > 0,
-      regularHourlyRate: configuredRegularHourlyRate <= 0 && regularHourlyRate > 0
+      regularHourlyRate: configuredRegularHourlyRate <= 0 && regularHourlyRate > 0,
+      hourlyRate: configuredHourlyRate <= 0 && hourlyRate > 0,
+      comprehensiveHourlyRate: configuredComprehensiveHourlyRate <= 0 && comprehensiveHourlyRate > 0
     },
     missingConfig: uniqueMissingConfig,
     prompts: uniqueMissingConfig.map((key) => `missing:${key}`)
@@ -273,7 +301,14 @@ export function normalizeEntry(entry = {}, settings = DEFAULT_SETTINGS) {
     overtimeHours = clampNumber(entry.overtimeHours, 0);
     const detailTotal = regularHours + overtimeHours;
     const explicitTotal = clampNumber(entry.totalHours, 0, detailTotal);
-    totalHours = detailTotal > 0 ? detailTotal : explicitTotal;
+    if (detailTotal > 0) {
+      totalHours = detailTotal;
+    } else {
+      totalHours = explicitTotal;
+      const standardHours = dayType === "workday" ? merged.normalHoursPerDay : 0;
+      regularHours = Math.min(totalHours, standardHours);
+      overtimeHours = Math.max(0, totalHours - regularHours);
+    }
   }
 
   return {
@@ -325,7 +360,13 @@ export function buildEntryFromShiftPreset(date, preset = {}, overrides = {}) {
     entry.regularHours = round2(Math.min(entry.totalHours, standardHours));
     entry.overtimeHours = round2(Math.max(0, entry.totalHours - entry.regularHours));
   } else {
-    if (entry.totalHours === 0) entry.totalHours = round2(entry.regularHours + entry.overtimeHours);
+    const detailTotal = entry.regularHours + entry.overtimeHours;
+    if (entry.totalHours === 0) entry.totalHours = round2(detailTotal);
+    if (detailTotal === 0 && entry.totalHours > 0) {
+      const standardHours = entry.dayType === "workday" ? normalHoursPerDay : 0;
+      entry.regularHours = round2(Math.min(entry.totalHours, standardHours));
+      entry.overtimeHours = round2(Math.max(0, entry.totalHours - entry.regularHours));
+    }
   }
 
   return entry;
@@ -345,8 +386,10 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
   });
   const existingDayTotal = sameDateEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
   const existingMonthTotal = sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
+  const existingMonthOvertime = sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).overtimeHours, 0);
   const dailyTotal = round2(existingDayTotal + normalized.totalHours);
   const monthlyTotal = round2(existingMonthTotal + normalized.totalHours);
+  const monthlyOvertime = round2(existingMonthOvertime + normalized.overtimeHours);
 
   if (!isValidDateString(date)) errors.push("请选择有效日期");
   if (![RECORD_MODES.TIME, RECORD_MODES.HOURS].includes(recordMode)) errors.push("请选择正确的记录方式");
@@ -385,6 +428,15 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
   if (dailyTotal > WORK_LIMITS.maxDayHours) {
     errors.push(`当天合计不能超过 ${WORK_LIMITS.maxDayHours} 小时，当前将达到 ${dailyTotal} 小时`);
   }
+  if (normalized.dayType === "workday" && normalized.overtimeHours > LEGAL_RULES.dailyOvertimeSoftLimit) {
+    warnings.push(`工作日延长工时超过 ${LEGAL_RULES.dailyOvertimeSoftLimit} 小时，应确认已协商审批`);
+  }
+  if (normalized.dayType === "workday" && normalized.overtimeHours > LEGAL_RULES.dailyOvertimeHardLimit) {
+    warnings.push(`工作日延长工时超过 ${LEGAL_RULES.dailyOvertimeHardLimit} 小时，存在合规风险`);
+  }
+  if (monthlyOvertime > LEGAL_RULES.monthlyOvertimeLimit) {
+    warnings.push(`本月加班将达到 ${monthlyOvertime} 小时，超过 ${LEGAL_RULES.monthlyOvertimeLimit} 小时合规警戒线`);
+  }
   if (monthlyTotal > WORK_LIMITS.maxMonthlyHours) {
     warnings.push(`本月工时将达到 ${monthlyTotal} 小时，请确认排班是否真实`);
   }
@@ -395,15 +447,33 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
     warnings: [...new Set(warnings)],
     normalized,
     dailyTotal,
-    monthlyTotal
+    monthlyTotal,
+    monthlyOvertime
   };
 }
 
 export function overtimeMultiplierForDay(dayType, settings = DEFAULT_SETTINGS) {
   const merged = mergeSettings(settings);
-  if (dayType === "holiday") return merged.holidayMultiplier;
-  if (dayType === "restday") return merged.restDayMultiplier;
-  return merged.overtimeMultiplier;
+  if (dayType === "holiday") return Math.max(
+    LEGAL_RULES.holidayOvertimeMultiplier,
+    clampNumber(merged.holidayMultiplier, 0)
+  );
+  if (dayType === "restday") return Math.max(
+    LEGAL_RULES.restDayOvertimeMultiplier,
+    clampNumber(merged.restDayMultiplier, 0)
+  );
+  return Math.max(
+    LEGAL_RULES.workdayOvertimeMultiplier,
+    clampNumber(merged.overtimeMultiplier, 0)
+  );
+}
+
+export function comprehensiveOvertimeMultiplier(settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  return Math.max(
+    LEGAL_RULES.workdayOvertimeMultiplier,
+    clampNumber(merged.comprehensiveOvertimeMultiplier, 0)
+  );
 }
 
 export function calculateEntryPay(entry = {}, settings = DEFAULT_SETTINGS) {
@@ -413,10 +483,13 @@ export function calculateEntryPay(entry = {}, settings = DEFAULT_SETTINGS) {
   const mode = merged.salaryMode;
 
   if (mode === SALARY_MODES.HOURLY) {
+    const hourlyRate = insights.rates.hourlyRate;
+    const regularPay = normalized.regularHours * hourlyRate;
+    const overtimePay = normalized.overtimeHours * hourlyRate * overtimeMultiplierForDay(normalized.dayType, merged);
     return {
-      regularPay: round2(normalized.totalHours * merged.hourlyRate),
-      overtimePay: 0,
-      totalPay: round2(normalized.totalHours * merged.hourlyRate)
+      regularPay: round2(regularPay),
+      overtimePay: round2(overtimePay),
+      totalPay: round2(regularPay + overtimePay)
     };
   }
 
@@ -431,8 +504,9 @@ export function calculateEntryPay(entry = {}, settings = DEFAULT_SETTINGS) {
   }
 
   if (mode === SALARY_MODES.COMPREHENSIVE) {
-    const multiplier = normalized.dayType === "holiday" ? merged.holidayMultiplier : 1;
-    const pay = normalized.totalHours * merged.comprehensiveHourlyRate * multiplier;
+    const hourlyRate = insights.rates.comprehensiveHourlyRate;
+    const multiplier = normalized.dayType === "holiday" ? overtimeMultiplierForDay("holiday", merged) : 1;
+    const pay = normalized.totalHours * hourlyRate * multiplier;
     return {
       regularPay: normalized.dayType === "holiday" ? 0 : round2(pay),
       overtimePay: normalized.dayType === "holiday" ? round2(pay) : 0,
@@ -484,6 +558,7 @@ export function calculateMonthlyPayroll(entries = [], adjustments = [], settings
     overtimePay = monthEntries.reduce((sum, entry) => sum + calculateEntryPay(entry, merged).overtimePay, 0);
   } else if (merged.salaryMode === SALARY_MODES.COMPREHENSIVE) {
     const targetHours = clampNumber(merged.comprehensiveTargetHours, 0);
+    const hourlyRate = deriveSalaryInsights(merged).rates.comprehensiveHourlyRate;
     const holidayHours = monthEntries
       .filter((entry) => entry.dayType === "holiday")
       .reduce((sum, entry) => sum + entry.totalHours, 0);
@@ -491,9 +566,9 @@ export function calculateMonthlyPayroll(entries = [], adjustments = [], settings
     const excessHours = Math.max(0, nonHolidayHours - targetHours);
     regularHours = round2(Math.min(nonHolidayHours, targetHours));
     overtimeHours = round2(excessHours + holidayHours);
-    regularPay = regularHours * merged.comprehensiveHourlyRate;
-    overtimePay = excessHours * merged.comprehensiveHourlyRate * merged.comprehensiveOvertimeMultiplier
-      + holidayHours * merged.comprehensiveHourlyRate * merged.holidayMultiplier;
+    regularPay = regularHours * hourlyRate;
+    overtimePay = excessHours * hourlyRate * comprehensiveOvertimeMultiplier(merged)
+      + holidayHours * hourlyRate * overtimeMultiplierForDay("holiday", merged);
   } else {
     const pay = monthEntries.reduce((sum, entry) => {
       const entryPay = calculateEntryPay(entry, merged);
@@ -523,6 +598,65 @@ export function calculateMonthlyPayroll(entries = [], adjustments = [], settings
     allowances: adjustmentTotals.allowances,
     deductions: adjustmentTotals.deductions,
     grossBeforeTax
+  };
+}
+
+export function calculateComplianceSummary(entries = [], settings = DEFAULT_SETTINGS, year, monthIndex) {
+  const merged = mergeSettings(settings);
+  const month = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  const monthEntries = entries
+    .filter((entry) => monthKeyFromDate(entry.date) === month)
+    .map((entry) => normalizeEntry(entry, merged));
+  const daily = new Map();
+  const weekly = new Map();
+
+  for (const entry of monthEntries) {
+    if (!daily.has(entry.date)) {
+      daily.set(entry.date, {
+        date: entry.date,
+        totalHours: 0,
+        regularHours: 0,
+        overtimeHours: 0,
+        workdayOvertimeHours: 0
+      });
+    }
+    const day = daily.get(entry.date);
+    day.totalHours = round2(day.totalHours + entry.totalHours);
+    day.regularHours = round2(day.regularHours + entry.regularHours);
+    day.overtimeHours = round2(day.overtimeHours + entry.overtimeHours);
+    if (entry.dayType === "workday") {
+      day.workdayOvertimeHours = round2(day.workdayOvertimeHours + entry.overtimeHours);
+    }
+
+    const weekKey = weekKeyFromDate(entry.date);
+    weekly.set(weekKey, round2((weekly.get(weekKey) || 0) + entry.totalHours));
+  }
+
+  const days = [...daily.values()];
+  const monthlyOvertimeHours = round2(days.reduce((sum, day) => sum + day.overtimeHours, 0));
+  const dailySoftOvertimeDays = days.filter((day) => day.workdayOvertimeHours > LEGAL_RULES.dailyOvertimeSoftLimit);
+  const dailyHardOvertimeDays = days.filter((day) => day.workdayOvertimeHours > LEGAL_RULES.dailyOvertimeHardLimit);
+  const weeklyOverLimit = [...weekly.entries()]
+    .filter(([, hours]) => hours > LEGAL_RULES.weeklyStandardHours)
+    .map(([week, hours]) => ({ week, hours }));
+  const warnings = [];
+
+  if (monthlyOvertimeHours > LEGAL_RULES.monthlyOvertimeLimit) {
+    warnings.push(`本月加班 ${monthlyOvertimeHours}h，超过 ${LEGAL_RULES.monthlyOvertimeLimit}h 警戒线`);
+  }
+  if (dailyHardOvertimeDays.length) {
+    warnings.push(`${dailyHardOvertimeDays.length} 天工作日加班超过 ${LEGAL_RULES.dailyOvertimeHardLimit}h`);
+  }
+  if (weeklyOverLimit.length) {
+    warnings.push(`${weeklyOverLimit.length} 周总工时超过 ${LEGAL_RULES.weeklyStandardHours}h`);
+  }
+
+  return {
+    monthlyOvertimeHours,
+    dailySoftOvertimeDays,
+    dailyHardOvertimeDays,
+    weeklyOverLimit,
+    warnings
   };
 }
 
@@ -643,4 +777,12 @@ function isValidDateString(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00`);
   return !Number.isNaN(parsed.getTime()) && formatDate(parsed) === value;
+}
+
+function weekKeyFromDate(value) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  const weekday = date.getDay() || 7;
+  date.setDate(date.getDate() - weekday + 1);
+  return formatDate(date);
 }
