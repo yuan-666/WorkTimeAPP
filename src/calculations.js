@@ -467,6 +467,7 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
   const date = String(entry.date || "");
   const recordMode = entry.recordMode || RECORD_MODES.TIME;
   const dayType = entry.dayType || "workday";
+  const zeroHourMarker = ["rest-day", "leave-note"].includes(entry.source);
   const sameDateEntries = existingEntries.filter((item) => item.date === date && item.id !== entry.id);
   const sameMonthEntries = existingEntries.filter((item) => {
     return monthKeyFromDate(item.date) === monthKeyFromDate(date) && item.id !== entry.id;
@@ -502,7 +503,7 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
     }
   }
 
-  if (normalized.totalHours <= 0) errors.push("工时必须大于 0");
+  if (normalized.totalHours <= 0 && !zeroHourMarker) errors.push("工时必须大于 0");
   if (normalized.totalHours > WORK_LIMITS.maxEntryHours) {
     errors.push(`单条记录不能超过 ${WORK_LIMITS.maxEntryHours} 小时`);
   }

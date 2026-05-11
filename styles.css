@@ -259,10 +259,10 @@ h3 {
 .holiday-card span,
 .holiday-card p,
 .bulk-panel span,
+.bulk-tool span,
 .preset-grid span,
 .preset-grid small,
-.command-strip span,
-.command-context span {
+.entry-choice-grid span {
   color: var(--muted);
 }
 
@@ -311,60 +311,6 @@ h3 {
 
 .calendar-panel {
   padding: 14px;
-}
-
-.command-strip {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.command-context,
-.command-strip button {
-  min-height: 58px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  font-weight: 700;
-  display: grid;
-  gap: 3px;
-  padding: 8px 10px;
-  text-align: left;
-}
-
-.command-context {
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  min-height: 46px;
-  border-color: rgba(23, 107, 91, 0.18);
-  background: #f8fbfa;
-}
-
-.command-strip button.is-primary {
-  grid-column: 1 / -1;
-  border-color: rgba(23, 107, 91, 0.35);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.command-context strong,
-.command-strip strong,
-.command-strip span,
-.command-context span {
-  display: block;
-}
-
-.command-context strong {
-  color: var(--ink);
-}
-
-.command-strip span,
-.command-context span {
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.25;
 }
 
 .detail-panel {
@@ -540,6 +486,38 @@ h3 {
   text-align: right;
 }
 
+.entry-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.entry-choice-grid button {
+  min-height: 68px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  text-align: left;
+}
+
+.entry-choice-grid button.is-active,
+.entry-choice-grid button:hover {
+  border-color: var(--accent);
+  background: #f2faf7;
+}
+
+.entry-choice-grid strong,
+.entry-choice-grid span {
+  display: block;
+}
+
+.entry-choice-grid span {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .day-status {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -625,6 +603,10 @@ h3 {
   gap: 12px;
 }
 
+.compact-times {
+  grid-template-columns: 1fr 1fr 0.8fr;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -701,6 +683,24 @@ button:focus-visible {
 .tool-form[data-record-mode="time"] .hour-fields,
 .tool-form[data-record-mode="hours"] .time-fields {
   display: none;
+}
+
+.entry-advanced {
+  display: grid;
+  gap: 14px;
+}
+
+.entry-advanced.is-collapsed {
+  display: none;
+}
+
+.subtle-toggle {
+  min-height: 38px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .form-footer {
@@ -892,6 +892,7 @@ output {
 }
 
 .bulk-panel,
+.bulk-tool,
 .insight-panel,
 .law-card,
 .holiday-card {
@@ -947,6 +948,40 @@ output {
 
 .law-card strong {
   color: var(--accent-2);
+}
+
+.bulk-tool {
+  display: grid;
+  align-items: stretch;
+}
+
+.bulk-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(23, 107, 91, 0.22);
+  border-radius: 8px;
+  background: #f4fbf8;
+}
+
+.bulk-summary span,
+.bulk-summary small,
+.bulk-tool .check-row span {
+  font-size: 13px;
+}
+
+.bulk-summary small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.check-row.slim {
+  min-height: 40px;
+}
+
+.confirm-delete {
+  border-color: rgba(180, 61, 66, 0.24);
+  background: #fff7f2;
 }
 
 .law-panel {
@@ -1145,6 +1180,7 @@ output {
   .form-footer,
   .readiness,
   .bulk-panel,
+  .bulk-tool,
   .insight-panel {
     align-items: stretch;
     flex-direction: column;
@@ -1183,8 +1219,12 @@ output {
     grid-template-columns: 1fr;
   }
 
-  .command-strip,
-  .preset-grid {
+  .compact-times {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .preset-grid,
+  .entry-choice-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

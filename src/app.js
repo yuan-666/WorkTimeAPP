@@ -16,7 +16,6 @@ import {
   getHolidayInfo,
   getShiftPreset,
   inferDayType,
-  isWorkday,
   mergeSettings,
   monthIndexFromDate,
   normalizeEntry,
@@ -45,6 +44,8 @@ let ui = {
   monthIndex: now.getMonth(),
   selectedDate: today,
   editingEntryId: "",
+  entryAdvanced: false,
+  entryIntent: "",
   entryError: "",
   notice: "",
   lastDeleted: null
@@ -80,7 +81,7 @@ const MISSING_LABELS = {
 render();
 
 document.addEventListener("click", async (event) => {
-  const target = event.target.closest("[data-action], [data-view], [data-date], [data-preset], [data-delete-entry], [data-edit-entry], [data-delete-adjustment]");
+  const target = event.target.closest("[data-action], [data-view], [data-date], [data-preset], [data-entry-intent], [data-delete-entry], [data-edit-entry], [data-delete-adjustment]");
   if (!target) return;
 
   if (target.dataset.view) {
@@ -96,6 +97,8 @@ document.addEventListener("click", async (event) => {
     ui.year = yearFromDate(ui.selectedDate);
     ui.monthIndex = monthIndexFromDate(ui.selectedDate);
     ui.editingEntryId = "";
+    ui.entryAdvanced = false;
+    ui.entryIntent = "";
     ui.entryError = "";
     render();
     return;
@@ -107,8 +110,15 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.entryIntent) {
+    ui.entryError = "";
+    applyEntryIntent(target.dataset.entryIntent);
+    return;
+  }
+
   if (target.dataset.editEntry) {
     ui.editingEntryId = target.dataset.editEntry;
+    ui.entryAdvanced = true;
     ui.entryError = "";
     render();
     return;
@@ -141,6 +151,8 @@ document.addEventListener("click", async (event) => {
     ui.monthIndex = date.getMonth();
     ui.selectedDate = formatDate(date);
     ui.editingEntryId = "";
+    ui.entryAdvanced = false;
+    ui.entryIntent = "";
     ui.entryError = "";
     render();
   }
@@ -150,13 +162,22 @@ document.addEventListener("click", async (event) => {
     ui.monthIndex = now.getMonth();
     ui.selectedDate = today;
     ui.editingEntryId = "";
+    ui.entryAdvanced = false;
+    ui.entryIntent = "";
     ui.entryError = "";
     render();
   }
 
   if (action === "clear-edit") {
     ui.editingEntryId = "";
+    ui.entryAdvanced = false;
+    ui.entryIntent = "";
     ui.entryError = "";
+    render();
+  }
+
+  if (action === "toggle-entry-advanced") {
+    ui.entryAdvanced = !ui.entryAdvanced;
     render();
   }
 
@@ -208,40 +229,8 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
-  if (action === "save-default-shift") {
-    const defaultPreset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-    saveEntryObject(buildEntryFromShiftPreset(ui.selectedDate, defaultPreset, {
-      settings: state.settings,
-      dayType: inferDayType(ui.selectedDate, state.settings),
-      source: "default-shift"
-    }), "已套用默认班次", { strategy: "replace-main" });
-  }
-
   if (action === "copy-previous") {
     copyPreviousEntry();
-  }
-
-  if (action === "quick-overtime") {
-    saveEntryObject({
-      date: ui.selectedDate,
-      recordMode: RECORD_MODES.HOURS,
-      dayType: inferDayType(ui.selectedDate, state.settings),
-      regularHours: 0,
-      overtimeHours: 2,
-      totalHours: 2,
-      target: "",
-      note: "快速加班",
-      source: "quick-overtime"
-    }, "已设置 2 小时加班", { strategy: "replace-quick-overtime" });
-  }
-
-  if (action === "add-day-adjustment") {
-    addAutoAdjustment(ui.selectedDate, "已添加日补扣");
-    render();
-  }
-
-  if (action === "bulk-current-month") {
-    bulkGenerateMonth();
   }
 
   if (action === "undo-delete") {
@@ -253,8 +242,9 @@ document.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
   const formId = form.getAttribute("id");
-  if (formId === "entry-form") saveEntry(form);
+  if (formId === "entry-form") saveEntry(form, event.submitter?.value);
   if (formId === "adjustment-form") saveAdjustment(form);
+  if (formId === "bulk-form") bulkApply(form, event.submitter?.value);
   if (formId === "settings-form") saveSettings(form);
 });
 
@@ -267,13 +257,17 @@ document.addEventListener("input", (event) => {
     }
     updateEntryPreview();
   }
+  if (event.target.closest("#bulk-form")) updateBulkPreview();
 });
 
 document.addEventListener("change", async (event) => {
-  if (event.target.name === "recordMode") {
-    document.querySelector("#entry-form")?.setAttribute("data-record-mode", event.target.value);
+  if (event.target.closest("#entry-form")) {
+    const form = event.target.closest("#entry-form");
+    form?.setAttribute("data-record-mode", form.elements.recordMode?.value || RECORD_MODES.TIME);
     updateEntryPreview();
   }
+
+  if (event.target.closest("#bulk-form")) updateBulkPreview();
 
   if (event.target.name === "salaryMode" && event.target.closest("#settings-form")) {
     state.settings = limitSettings({
@@ -445,32 +439,15 @@ function renderCalendarView() {
             <p class="eyebrow">${selectedDateLabel(ui.selectedDate)}</p>
             <h2>每日记录</h2>
           </div>
-          ${ui.editingEntryId ? `<button class="plain-button" type="button" data-action="clear-edit">新增</button>` : ""}
+          <div class="button-row">
+            ${ui.editingEntryId ? `<button class="plain-button" type="button" data-action="clear-edit">新增</button>` : `<button class="plain-button" type="button" data-action="copy-previous">复制昨天</button>`}
+            <button class="plain-button" type="button" data-view="records">批量处理</button>
+          </div>
         </div>
         ${renderDayStatus(selectedEntries)}
-        ${renderDayCommandBar()}
         ${renderEntryForm()}
         ${renderSelectedDayList(selectedEntries, selectedAdjustments)}
       </section>
-    </div>
-  `;
-}
-
-function renderDayCommandBar() {
-  const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const autoAmount = Number(state.settings.autoAdjustment?.amount || 0);
-  const dayType = inferDayType(ui.selectedDate, state.settings);
-  const holiday = getHolidayInfo(ui.selectedDate);
-  return `
-    <div class="command-strip" aria-label="快速记录">
-      <div class="command-context">
-        <span>${escapeHtml(holiday ? holiday.name : DAY_TYPE_LABELS[dayType])}</span>
-        <strong>${payRuleTextForDayType(dayType)}</strong>
-      </div>
-      <button class="is-primary" type="button" data-action="save-default-shift"><strong>登记${escapeHtml(preset?.name || "默认班次")}</strong><span>一键保存今天</span></button>
-      <button type="button" data-action="copy-previous"><strong>复制上次</strong><span>少填一遍</span></button>
-      <button type="button" data-action="quick-overtime"><strong>加班 2h</strong><span>自动替换同日快捷加班</span></button>
-      <button type="button" data-action="add-day-adjustment"><strong>${autoAmount ? `补扣 ${money(autoAmount)}` : "补贴/扣款"}</strong><span>奖金餐补罚款</span></button>
     </div>
   `;
 }
@@ -554,34 +531,70 @@ function renderEntryForm() {
   const editing = state.entries.find((entry) => entry.id === ui.editingEntryId);
   const inferredDayType = inferDayType(ui.selectedDate, state.settings);
   const holiday = getHolidayInfo(ui.selectedDate);
-  const entry = editing || {
+  const overtimePreset = findPresetByIntent("overtime");
+  const intentEntry = ui.entryIntent === "leave-note" && editing
+    ? {
+        ...editing,
+        recordMode: RECORD_MODES.HOURS,
+        dayType: editing.dayType || inferredDayType,
+        regularHours: 0,
+        overtimeHours: 0,
+        totalHours: 0,
+        source: "leave-note"
+      }
+    : editing;
+  const entry = intentEntry || {
     date: ui.selectedDate,
-    recordMode: RECORD_MODES.TIME,
+    recordMode: ui.entryIntent === "leave-note" ? RECORD_MODES.HOURS : RECORD_MODES.TIME,
     dayType: inferredDayType,
     startTime: "09:00",
     endTime: "18:00",
     breakMinutes: 60,
-    regularHours: state.settings.normalHoursPerDay,
+    regularHours: ui.entryIntent === "leave-note" ? 0 : state.settings.normalHoursPerDay,
     overtimeHours: 0,
-    totalHours: state.settings.normalHoursPerDay,
+    totalHours: ui.entryIntent === "leave-note" ? 0 : state.settings.normalHoursPerDay,
     note: "",
-    target: ""
+    target: "",
+    source: ui.entryIntent
   };
   const recordMode = entry.recordMode || RECORD_MODES.TIME;
+  const sourceHint = entry.source || ui.entryIntent || "";
+  const normalizedForChoice = normalizeEntry(entry, state.settings);
+  const isRestChoice = sourceHint === "rest-day";
+  const isNoteChoice = sourceHint === "leave-note";
+  const isOvertimeChoice = !isRestChoice && !isNoteChoice && normalizedForChoice.overtimeHours > 0;
+  const isNormalChoice = !isRestChoice && !isNoteChoice && !isOvertimeChoice;
+  const advancedClass = ui.entryAdvanced || editing ? "" : "is-collapsed";
+  const advancedLabel = ui.entryAdvanced || editing ? "收起更多" : "更多设置";
   return `
     <form id="entry-form" class="tool-form" data-record-mode="${recordMode}">
       <input type="hidden" name="id" value="${escapeAttr(entry.id || "")}">
+      <input type="hidden" name="sourceHint" value="${escapeAttr(sourceHint)}">
       <div class="record-form-head">
         <div>
-          <span>${editing ? "编辑记录" : "登记工时"}</span>
-          <strong>${escapeHtml(holiday ? `${holiday.name} · ${DAY_TYPE_LABELS[inferredDayType]}` : DAY_TYPE_LABELS[inferredDayType])}</strong>
+          <span>${editing ? "编辑这条记录" : "今天发生了什么"}</span>
+          <strong>${escapeHtml(dayDecisionText(ui.selectedDate, inferredDayType, holiday))}</strong>
         </div>
         <small>${payRuleTextForDayType(entry.dayType || inferredDayType)}</small>
+      </div>
+      <div class="entry-choice-grid" aria-label="登记类型">
+        ${entryIntentButton("normal", "正常上班", "默认班次，自动算加班", isNormalChoice)}
+        ${entryIntentButton("overtime", "有加班", overtimePreset ? escapeHtml(overtimePreset.name) : "晚下班自动拆加班", isOvertimeChoice)}
+        ${entryIntentButton("rest", "休息", "一键标记，不计工资", isRestChoice)}
+        ${entryIntentButton("note", "请假/备注", "只补充说明", isNoteChoice)}
       </div>
       <div class="preset-grid" aria-label="班次模板">
         ${state.settings.shiftPresets.map((preset) => renderPresetButton(preset, entry)).join("")}
       </div>
-      <div class="form-grid">
+      <div class="mode-fields time-fields">
+        <div class="form-grid compact-times">
+          ${field("上班", `<input name="startTime" type="time" value="${escapeAttr(entry.startTime || "09:00")}">`)}
+          ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}">`)}
+          ${field("休息", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}" inputmode="numeric">`)}
+        </div>
+      </div>
+      <div class="entry-advanced ${advancedClass}">
+        <div class="form-grid">
         ${field("日期", `<input name="date" type="date" value="${escapeAttr(entry.date || ui.selectedDate)}" required>`)}
         ${field("日期类型", `
           <div class="segmented compact" role="radiogroup" aria-label="日期类型">
@@ -590,33 +603,40 @@ function renderEntryForm() {
             ${radio("dayType", "holiday", "法定假日", entry.dayType)}
           </div>
         `)}
-      </div>
-      <div class="segmented" role="radiogroup" aria-label="记录方式">
-        ${radio("recordMode", RECORD_MODES.TIME, "时间记录", recordMode)}
-        ${radio("recordMode", RECORD_MODES.HOURS, "工时记录", recordMode)}
-      </div>
-      <div class="mode-fields time-fields">
-        <div class="form-grid">
-          ${field("上班", `<input name="startTime" type="time" value="${escapeAttr(entry.startTime || "09:00")}">`)}
-          ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}">`)}
-          ${field("休息分钟", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}">`)}
         </div>
-      </div>
-      <div class="mode-fields hour-fields">
-        <div class="form-grid">
-          ${field("正班小时", `<input name="regularHours" type="number" min="0" max="${WORK_LIMITS.maxRegularHours}" step="0.25" value="${escapeAttr(entry.regularHours ?? state.settings.normalHoursPerDay)}">`)}
-          ${field("加班小时", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
-          ${field("总小时", `<input name="totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
+        <div class="segmented" role="radiogroup" aria-label="记录方式">
+          ${radio("recordMode", RECORD_MODES.TIME, "按上下班时间", recordMode)}
+          ${radio("recordMode", RECORD_MODES.HOURS, "直接填小时", recordMode)}
         </div>
+        <div class="mode-fields hour-fields">
+          <div class="form-grid">
+            ${field("正班小时", `<input name="regularHours" type="number" min="0" max="${WORK_LIMITS.maxRegularHours}" step="0.25" value="${escapeAttr(entry.regularHours ?? state.settings.normalHoursPerDay)}">`)}
+            ${field("加班小时", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
+            ${field("总小时", `<input name="totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
+          </div>
+        </div>
+        ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="今天想完成什么">`)}
+        ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="请假、调班、特殊说明">${escapeHtml(entry.note || "")}</textarea>`)}
       </div>
-      ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="本日目标">`)}
-      ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="备注">${escapeHtml(entry.note || "")}</textarea>`)}
+      <button class="subtle-toggle" type="button" data-action="toggle-entry-advanced">${advancedLabel}</button>
       <div id="entry-error" class="form-error" role="alert" ${ui.entryError ? "" : "hidden"}>${escapeHtml(ui.entryError)}</div>
       <div class="form-footer form-footer-strong">
         <output id="entry-preview">0h / ¥0.00</output>
-        <button class="primary-button submit-button" type="submit">${editing ? "保存修改" : "保存今天"}</button>
+        <button class="primary-button submit-button" type="submit" name="saveMode" value="work">${editing ? "保存修改" : (sourceHint === "leave-note" ? "保存备注" : "保存今日记录")}</button>
       </div>
     </form>
+  `;
+}
+
+function entryIntentButton(intent, title, detail, active = false) {
+  const submitRest = intent === "rest" ? ` name="saveMode" value="rest"` : "";
+  const type = intent === "rest" ? "submit" : "button";
+  const dataAttr = intent === "rest" ? "" : ` data-entry-intent="${intent}"`;
+  return `
+    <button class="${active ? "is-active" : ""}" type="${type}" data-choice-intent="${intent}"${dataAttr}${submitRest}>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </button>
   `;
 }
 
@@ -699,15 +719,15 @@ function renderRecordsView() {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   return `
     <div class="workspace two-column">
-      <section class="detail-panel" aria-label="补扣记录">
+      <section class="detail-panel" aria-label="批量处理">
         <div class="panel-head">
           <div>
             <p class="eyebrow">${MONTHS[ui.monthIndex]}</p>
-            <h2>补贴扣款</h2>
+            <h2>批量处理</h2>
           </div>
-          <button class="plain-button" type="button" data-action="bulk-current-month">批量工作日</button>
         </div>
         ${renderBulkPreview()}
+        <h3>补贴扣款</h3>
         ${renderAdjustmentForm()}
       </section>
       <section class="detail-panel" aria-label="记录列表">
@@ -729,17 +749,59 @@ function renderRecordsView() {
 
 function renderBulkPreview() {
   const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings);
-  const existing = new Set(state.entries.map((entry) => entry.date));
-  const pending = dates.filter((date) => !existing.has(date));
+  const start = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}-01`;
+  const end = formatDate(new Date(ui.year, ui.monthIndex + 1, 0));
+  const addPreview = previewBulkAdd({ start, end, rule: "workdays", presetId: preset?.id, overwrite: false });
+  const deletePreview = previewBulkDelete({ start, end, deleteKind: "bulk" });
   return `
-    <div class="bulk-panel">
-      <div>
-        <strong>批量生成工作日记录</strong>
-        <span>${MONTHS[ui.monthIndex]} 还有 ${pending.length} 个工作日未记录，已排除节假日和周末并包含调休上班，将套用 ${escapeHtml(preset?.name || "默认班次")}</span>
+    <form id="bulk-form" class="bulk-tool">
+      <div class="bulk-summary" id="bulk-preview" data-add="${escapeAttr(addPreview.summary)}" data-delete="${escapeAttr(deletePreview.summary)}">
+        <strong>${escapeHtml(addPreview.summary)}</strong>
+        <span>删除预览：${escapeHtml(deletePreview.summary)}</span>
+        <small>默认不覆盖已有记录；批量删除需要先勾选确认。</small>
       </div>
-      <button class="primary-button" type="button" data-action="bulk-current-month">生成</button>
-    </div>
+      <div class="form-grid">
+        ${field("开始", `<input name="start" type="date" value="${escapeAttr(start)}" required>`)}
+        ${field("结束", `<input name="end" type="date" value="${escapeAttr(end)}" required>`)}
+      </div>
+      <div class="form-grid">
+        ${field("添加规则", `
+          <select name="rule">
+            <option value="workdays">仅工作日和调休上班</option>
+            <option value="all">每天都添加</option>
+            <option value="rest">只添加休息日/节假日</option>
+          </select>
+        `)}
+        ${field("班次", `
+          <select name="presetId">
+            ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
+          </select>
+        `)}
+      </div>
+      <label class="check-row slim">
+        <input type="checkbox" name="overwrite" value="true">
+        <span>覆盖已有工时记录</span>
+      </label>
+      <div class="form-grid">
+        ${field("删除范围", `
+          <select name="deleteKind">
+            <option value="bulk">仅批量生成</option>
+            <option value="overtime">仅加班记录</option>
+            <option value="entries">全部工时记录</option>
+            <option value="adjustments">全部补扣记录</option>
+            <option value="all">工时和补扣都删</option>
+          </select>
+        `)}
+        <label class="check-row slim confirm-delete">
+          <input type="checkbox" name="confirmDelete" value="true">
+          <span>确认批量删除</span>
+        </label>
+      </div>
+      <div class="form-footer">
+        <button class="plain-button" type="submit" name="bulkAction" value="delete">批量删除</button>
+        <button class="primary-button" type="submit" name="bulkAction" value="add">批量添加</button>
+      </div>
+    </form>
   `;
 }
 
@@ -993,10 +1055,44 @@ function renderHolidayRuleCard() {
   `;
 }
 
-function saveEntry(form) {
+function saveEntry(form, saveMode = "work") {
   const data = Object.fromEntries(new FormData(form));
   const existingId = data.id || ui.editingEntryId;
   const existing = state.entries.find((item) => item.id === existingId);
+  if (data.sourceHint === "leave-note") {
+    saveEntryObject({
+      id: existingId || createId("entry"),
+      date: data.date,
+      recordMode: RECORD_MODES.HOURS,
+      dayType: data.dayType || inferDayType(data.date, state.settings),
+      regularHours: 0,
+      overtimeHours: 0,
+      totalHours: 0,
+      target: data.target?.trim() || "",
+      note: data.note?.trim() || "请假/备注",
+      source: "leave-note",
+      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString()
+    }, "已保存备注", { skipAutoAdjustment: true });
+    return;
+  }
+  if (saveMode === "rest") {
+    saveEntryObject({
+      id: existingId || createId("entry"),
+      date: data.date,
+      recordMode: RECORD_MODES.HOURS,
+      dayType: "restday",
+      regularHours: 0,
+      overtimeHours: 0,
+      totalHours: 0,
+      target: data.target?.trim() || "",
+      note: data.note?.trim() || "休息",
+      source: "rest-day",
+      updatedAt: new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString()
+    }, "已标记休息", { strategy: "replace-main", skipAutoAdjustment: true });
+    return;
+  }
   saveEntryObject({
     id: existingId || createId("entry"),
     date: data.date,
@@ -1010,7 +1106,7 @@ function saveEntry(form) {
     totalHours: Number(data.totalHours || 0),
     target: data.target.trim(),
     note: data.note.trim(),
-    source: existing?.source || "manual",
+    source: "manual",
     updatedAt: new Date().toISOString(),
     createdAt: existing?.createdAt || new Date().toISOString()
   }, "已保存工时记录");
@@ -1047,11 +1143,12 @@ function saveEntryObject(entry, notice, options = {}) {
   };
   state.entries = state.entries.filter((item) => item.id !== normalizedEntry.id).concat(entryToSave);
   state.entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  addAutoAdjustment(normalizedEntry.date);
+  if (!options.skipAutoAdjustment) addAutoAdjustment(normalizedEntry.date);
   ui.selectedDate = normalizedEntry.date;
   ui.year = yearFromDate(normalizedEntry.date);
   ui.monthIndex = monthIndexFromDate(normalizedEntry.date);
   ui.editingEntryId = "";
+  ui.entryIntent = "";
   ui.entryError = "";
   persist(validation.warnings[0] ? `${notice}，${validation.warnings[0]}` : notice);
   render();
@@ -1065,11 +1162,6 @@ function resolveEntryForSave(entry, options = {}) {
   }
 
   const sameDate = state.entries.filter((item) => item.date === entry.date);
-  if (options.strategy === "replace-quick-overtime") {
-    const existing = sameDate.find((item) => isQuickOvertimeEntry(item));
-    return existing ? { id: existing.id, createdAt: existing.createdAt } : {};
-  }
-
   if (options.strategy === "replace-main") {
     const mainEntries = sameDate.filter((item) => !isQuickOvertimeEntry(item));
     if (mainEntries.length > 1) {
@@ -1151,6 +1243,7 @@ function updateEntryPreview() {
   const entry = {
     ...data,
     id: data.id || ui.editingEntryId,
+    source: data.sourceHint || "",
     recordMode,
     breakMinutes: Number(data.breakMinutes || 0),
     regularHours: Number(data.regularHours || 0),
@@ -1196,6 +1289,54 @@ function applyPresetToForm(presetId) {
   }
 }
 
+function applyEntryIntent(intent) {
+  const form = document.querySelector("#entry-form");
+  if (!form) return;
+  if (intent === "normal") {
+    ui.entryIntent = "";
+    form.elements.sourceHint.value = "";
+    applyPresetToForm(state.settings.defaultPresetId);
+    setEntryChoiceActive("normal");
+    return;
+  }
+  if (intent === "overtime") {
+    ui.entryIntent = "";
+    form.elements.sourceHint.value = "";
+    applyPresetToForm(findPresetByIntent("overtime")?.id || state.settings.defaultPresetId);
+    setEntryChoiceActive("overtime");
+    return;
+  }
+  if (intent === "note") {
+    ui.entryIntent = "leave-note";
+    ui.entryAdvanced = true;
+    render();
+    document.querySelector("#entry-form textarea[name='note']")?.focus();
+  }
+}
+
+function setEntryChoiceActive(intent) {
+  const form = document.querySelector("#entry-form");
+  if (!form) return;
+  for (const button of form.querySelectorAll("[data-choice-intent]")) {
+    button.classList.toggle("is-active", button.dataset.choiceIntent === intent);
+  }
+}
+
+function findPresetByIntent(intent) {
+  const presets = state.settings.shiftPresets || [];
+  if (intent === "overtime") {
+    return presets.find((preset) => preset.id === "overtime")
+      || presets.find((preset) => /加班/.test(preset.name || "") && preset.dayType !== "restday")
+      || presets.find((preset) => preset.recordMode === RECORD_MODES.TIME && calculateTimeHours(preset.startTime, preset.endTime, preset.breakMinutes) > state.settings.normalHoursPerDay);
+  }
+  if (intent === "rest") {
+    return presets.find((preset) => preset.id === "rest")
+      || presets.find((preset) => preset.dayType === "restday")
+      || presets.find((preset) => /休息|周末/.test(preset.name || ""));
+  }
+  return getShiftPreset(state.settings, state.settings.defaultPresetId);
+}
+
 function copyPreviousEntry() {
   const previous = [...state.entries]
     .filter((entry) => entry.date < ui.selectedDate)
@@ -1237,16 +1378,38 @@ function addAutoAdjustment(date, notice = "") {
   if (notice) persist(notice);
 }
 
-function bulkGenerateMonth() {
-  const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const dates = workDatesForMonth(ui.year, ui.monthIndex, state.settings);
-  const existing = new Set(state.entries.map((entry) => entry.date));
+function bulkApply(form, action) {
+  if (action === "delete") {
+    bulkDelete(form);
+    return;
+  }
+  bulkAdd(form);
+}
+
+function bulkAdd(form) {
+  const config = bulkConfigFromForm(form);
+  const preview = previewBulkAdd(config);
+  if (!preview.dates.length) {
+    persist("没有可添加的日期");
+    render();
+    return;
+  }
+  const preset = getShiftPreset(state.settings, config.presetId);
+  const targetDates = new Set(preview.dates);
+  let removed = [];
+  if (config.overwrite) {
+    removed = state.entries.filter((entry) => targetDates.has(entry.date));
+    if (removed.length) {
+      state.entries = state.entries.filter((entry) => !targetDates.has(entry.date));
+    }
+  }
+
   let count = 0;
-  for (const date of dates) {
-    if (existing.has(date)) continue;
+  const addedIds = [];
+  for (const date of preview.dates) {
     const entry = buildEntryFromShiftPreset(date, preset, {
       settings: state.settings,
-      dayType: inferDayType(date, state.settings),
+      dayType: preset?.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings),
       source: "bulk"
     });
     const entryToSave = {
@@ -1258,24 +1421,164 @@ function bulkGenerateMonth() {
     };
     const validation = validateEntry(entryToSave, state.settings, state.entries);
     if (!validation.valid) continue;
-    state.entries.push({
+    const savedEntry = {
       ...entryToSave,
       regularHours: validation.normalized.regularHours,
       overtimeHours: validation.normalized.overtimeHours,
       totalHours: validation.normalized.totalHours
-    });
+    };
+    state.entries.push(savedEntry);
+    addedIds.push(savedEntry.id);
     addAutoAdjustment(date);
     count += 1;
   }
+
   state.entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  persist(count ? `已生成 ${count} 条工作日记录` : "本月工作日都已记录");
+  if (removed.length || (config.overwrite && addedIds.length)) {
+    ui.lastDeleted = { type: "batch-replace", payload: { entries: removed, adjustments: [], addedIds } };
+  }
+  persist(count ? `已批量添加 ${count} 条记录${removed.length ? "，可撤销覆盖" : ""}` : "没有可添加的日期");
   render();
+}
+
+function bulkDelete(form) {
+  const config = bulkConfigFromForm(form);
+  if (!config.confirmDelete) {
+    persist("请先勾选确认批量删除");
+    render();
+    return;
+  }
+  const preview = previewBulkDelete(config);
+  if (!preview.entries.length && !preview.adjustments.length) {
+    persist("当前条件下没有可删除记录");
+    render();
+    return;
+  }
+  const entryIds = new Set(preview.entries.map((entry) => entry.id));
+  const adjustmentIds = new Set(preview.adjustments.map((item) => item.id));
+  state.entries = state.entries.filter((entry) => !entryIds.has(entry.id));
+  state.adjustments = state.adjustments.filter((item) => !adjustmentIds.has(item.id));
+  ui.lastDeleted = {
+    type: "batch",
+    payload: { entries: preview.entries, adjustments: preview.adjustments }
+  };
+  persist(`已删除 ${preview.count} 条记录，可撤销`);
+  render();
+}
+
+function updateBulkPreview() {
+  const form = document.querySelector("#bulk-form");
+  const preview = document.querySelector("#bulk-preview");
+  if (!form || !preview) return;
+  const config = bulkConfigFromForm(form);
+  const addPreview = previewBulkAdd(config);
+  const deletePreview = previewBulkDelete(config);
+  preview.querySelector("strong").textContent = addPreview.summary;
+  preview.querySelector("span").textContent = `删除预览：${deletePreview.summary}`;
+  preview.querySelector("small").textContent = config.overwrite
+    ? "已打开覆盖，批量添加会替换范围内已有工时。"
+    : "默认不覆盖已有记录；批量删除需要先勾选确认。";
+}
+
+function bulkConfigFromForm(form) {
+  const data = Object.fromEntries(new FormData(form));
+  return {
+    start: data.start,
+    end: data.end,
+    rule: data.rule || "workdays",
+    presetId: data.presetId || state.settings.defaultPresetId,
+    overwrite: data.overwrite === "true",
+    deleteKind: data.deleteKind || "bulk",
+    confirmDelete: data.confirmDelete === "true"
+  };
+}
+
+function previewBulkAdd(config) {
+  const preset = getShiftPreset(state.settings, config.presetId);
+  const candidates = datesForBulkRule(config.start, config.end, config.rule);
+  const existing = new Set(state.entries.map((entry) => entry.date));
+  const dates = config.overwrite ? candidates : candidates.filter((date) => !existing.has(date));
+  const skipped = candidates.length - dates.length;
+  const samplePay = dates.reduce((sum, date) => {
+    const entry = buildEntryFromShiftPreset(date, preset, {
+      settings: state.settings,
+      dayType: preset?.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings)
+    });
+    return sum + calculateEntryPay(entry, state.settings).totalPay;
+  }, 0);
+  return {
+    dates,
+    skipped,
+    summary: dates.length
+      ? `将添加 ${dates.length} 天，跳过 ${skipped} 天，预计 ${money(samplePay)}`
+      : "没有可添加的日期。已记录或节假日已被自动跳过。"
+  };
+}
+
+function previewBulkDelete(config) {
+  const start = normalizeDateInput(config.start);
+  const end = normalizeDateInput(config.end);
+  const inRange = (item) => item.date >= start && item.date <= end;
+  const entries = state.entries.filter((entry) => {
+    if (!inRange(entry)) return false;
+    if (config.deleteKind === "all" || config.deleteKind === "entries") return true;
+    if (config.deleteKind === "bulk") return entry.source === "bulk";
+    if (config.deleteKind === "overtime") return normalizeEntry(entry, state.settings).overtimeHours > 0;
+    return false;
+  });
+  const adjustments = state.adjustments.filter((item) => {
+    if (!inRange(item)) return false;
+    return config.deleteKind === "all" || config.deleteKind === "adjustments";
+  });
+  const hours = round2(entries.reduce((sum, entry) => sum + normalizeEntry(entry, state.settings).totalHours, 0));
+  const pay = round2(entries.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
+  const count = entries.length + adjustments.length;
+  return {
+    entries,
+    adjustments,
+    count,
+    summary: count
+      ? `将删除 ${count} 条，影响 ${hours}h，预计 ${money(pay)}`
+      : "当前条件下没有可删除记录。换个范围或类型试试。"
+  };
+}
+
+function datesForBulkRule(start, end, rule) {
+  const startDate = new Date(`${normalizeDateInput(start)}T00:00:00`);
+  const endDate = new Date(`${normalizeDateInput(end)}T00:00:00`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) return [];
+  const dates = [];
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const date = formatDate(cursor);
+    const dayType = inferDayType(date, state.settings);
+    const include = rule === "all"
+      || (rule === "rest" && dayType !== "workday")
+      || (rule === "workdays" && dayType === "workday");
+    if (include) dates.push(date);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+function normalizeDateInput(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? value : today;
 }
 
 function undoDelete() {
   if (!ui.lastDeleted) return;
   if (ui.lastDeleted.type === "entry") state.entries.push(ui.lastDeleted.payload);
   if (ui.lastDeleted.type === "adjustment") state.adjustments.push(ui.lastDeleted.payload);
+  if (ui.lastDeleted.type === "batch") {
+    state.entries.push(...(ui.lastDeleted.payload.entries || []));
+    state.adjustments.push(...(ui.lastDeleted.payload.adjustments || []));
+  }
+  if (ui.lastDeleted.type === "batch-replace") {
+    const addedIds = new Set(ui.lastDeleted.payload.addedIds || []);
+    state.entries = state.entries.filter((entry) => !addedIds.has(entry.id));
+    state.entries.push(...(ui.lastDeleted.payload.entries || []));
+    state.adjustments.push(...(ui.lastDeleted.payload.adjustments || []));
+  }
   state.entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
   state.adjustments.sort((a, b) => String(a.date).localeCompare(String(b.date)));
   ui.lastDeleted = null;
@@ -1332,17 +1635,6 @@ function seedDemoData() {
     note: "",
     createdAt: new Date().toISOString()
   });
-}
-
-function workDatesForMonth(year, monthIndex, settings = state.settings) {
-  const days = new Date(year, monthIndex + 1, 0).getDate();
-  const dates = [];
-  for (let day = 1; day <= days; day += 1) {
-    const date = new Date(year, monthIndex, day);
-    const dateText = formatDate(date);
-    if (isWorkday(dateText, settings)) dates.push(dateText);
-  }
-  return dates;
 }
 
 function persist(notice = "") {
@@ -1563,6 +1855,14 @@ function selectedDateLabel(date) {
   const parsed = new Date(`${date}T00:00:00`);
   const holiday = getHolidayInfo(date);
   return `${date} 周${WEEKDAYS[parsed.getDay()]}${holiday ? ` · ${holiday.name}` : ""}`;
+}
+
+function dayDecisionText(date, dayType, holiday) {
+  const parsed = new Date(`${date}T00:00:00`);
+  const prefix = date === today ? "今天" : `周${WEEKDAYS[parsed.getDay()]}`;
+  if (dayType === "holiday") return `${prefix} · 法定节假日 · 按 3 倍`;
+  if (dayType === "restday") return `${prefix} · ${holiday?.name || "休息日"} · 按 2 倍`;
+  return `${prefix} · 工作日 · 自动拆正班和加班`;
 }
 
 function money(value) {

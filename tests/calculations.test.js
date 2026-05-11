@@ -248,6 +248,21 @@ test("entry validation rejects unrealistic hours and invalid time ranges", () =>
   assert.match(sameTime.errors.join(" "), /上下班时间不能相同/);
 });
 
+test("entry validation allows rest and leave markers without work hours", () => {
+  const rest = validateEntry({
+    date: "2026-05-10",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "restday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "rest-day",
+    note: "休息"
+  });
+  assert.equal(rest.valid, true);
+  assert.equal(calculateEntryPay(rest.normalized).totalPay, 0);
+});
+
 test("entry validation checks daily aggregate limits", () => {
   const result = validateEntry({
     id: "new",
