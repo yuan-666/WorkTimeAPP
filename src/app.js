@@ -2,6 +2,7 @@ import {
   DEFAULT_SETTINGS,
   RECORD_MODES,
   SALARY_MODES,
+  WORK_LIMITS,
   buildCalendarDays,
   buildEntryFromShiftPreset,
   calculateCumulativeTaxForMonth,
@@ -17,6 +18,7 @@ import {
   normalizeEntry,
   round2,
   summarizeYear,
+  validateEntry,
   yearFromDate
 } from "./calculations.js";
 import {
@@ -38,9 +40,15 @@ let ui = {
   monthIndex: now.getMonth(),
   selectedDate: today,
   editingEntryId: "",
+  entryError: "",
   notice: "",
   lastDeleted: null
 };
+const repairedOnLoad = repairRepeatedEntries();
+if (repairedOnLoad) {
+  ui.notice = `已合并 ${repairedOnLoad} 条重复工时记录`;
+  saveState(state);
+}
 
 const MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -83,17 +91,20 @@ document.addEventListener("click", async (event) => {
     ui.year = yearFromDate(ui.selectedDate);
     ui.monthIndex = monthIndexFromDate(ui.selectedDate);
     ui.editingEntryId = "";
+    ui.entryError = "";
     render();
     return;
   }
 
   if (target.dataset.preset) {
+    ui.entryError = "";
     applyPresetToForm(target.dataset.preset);
     return;
   }
 
   if (target.dataset.editEntry) {
     ui.editingEntryId = target.dataset.editEntry;
+    ui.entryError = "";
     render();
     return;
   }
@@ -125,6 +136,7 @@ document.addEventListener("click", async (event) => {
     ui.monthIndex = date.getMonth();
     ui.selectedDate = formatDate(date);
     ui.editingEntryId = "";
+    ui.entryError = "";
     render();
   }
 
@@ -133,11 +145,13 @@ document.addEventListener("click", async (event) => {
     ui.monthIndex = now.getMonth();
     ui.selectedDate = today;
     ui.editingEntryId = "";
+    ui.entryError = "";
     render();
   }
 
   if (action === "clear-edit") {
     ui.editingEntryId = "";
+    ui.entryError = "";
     render();
   }
 
@@ -171,12 +185,31 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
+  if (action === "repair-records") {
+    const count = repairRepeatedEntries();
+    if (count) {
+      persist(`已合并 ${count} 条重复工时记录`);
+    } else {
+      const issue = findEntryIntegrityIssues()[0];
+      if (issue) {
+        ui.selectedDate = issue.date;
+        ui.year = yearFromDate(issue.date);
+        ui.monthIndex = monthIndexFromDate(issue.date);
+        persist("已定位到需要手动检查的日期");
+      } else {
+        persist("没有发现异常工时");
+      }
+    }
+    render();
+  }
+
   if (action === "save-default-shift") {
     const defaultPreset = getShiftPreset(state.settings, state.settings.defaultPresetId);
     saveEntryObject(buildEntryFromShiftPreset(ui.selectedDate, defaultPreset, {
       settings: state.settings,
-      dayType: inferDayType(ui.selectedDate, state.settings)
-    }), "已套用默认班次");
+      dayType: inferDayType(ui.selectedDate, state.settings),
+      source: "default-shift"
+    }), "已套用默认班次", { strategy: "replace-main" });
   }
 
   if (action === "copy-previous") {
@@ -192,8 +225,9 @@ document.addEventListener("click", async (event) => {
       overtimeHours: 2,
       totalHours: 2,
       target: "",
-      note: "快速加班"
-    }, "已记录 2 小时加班");
+      note: "快速加班",
+      source: "quick-overtime"
+    }, "已设置 2 小时加班", { strategy: "replace-quick-overtime" });
   }
 
   if (action === "add-day-adjustment") {
@@ -220,7 +254,10 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (event.target.closest("#entry-form")) updateEntryPreview();
+  if (event.target.closest("#entry-form")) {
+    ui.entryError = "";
+    updateEntryPreview();
+  }
 });
 
 document.addEventListener("change", async (event) => {
@@ -233,7 +270,7 @@ document.addEventListener("change", async (event) => {
     try {
       const text = await event.target.files[0].text();
       state = importBackupText(text);
-      state.settings = mergeSettings(state.settings);
+      state.settings = limitSettings(state.settings);
       persist("已导入备份");
       render();
     } catch {
@@ -250,7 +287,7 @@ if ("serviceWorker" in navigator) {
 }
 
 function render() {
-  state.settings = mergeSettings(state.settings);
+  state.settings = limitSettings(state.settings);
   app.innerHTML = `
     <div class="shell">
       ${renderSidebar()}
@@ -335,6 +372,7 @@ function renderTopbar() {
 function renderReadiness() {
   const insights = deriveSalaryInsights(state.settings);
   const missing = insights.missingConfig.map((key) => MISSING_LABELS[key] || key);
+  const integrityIssues = findEntryIntegrityIssues();
   const backupText = state.backup?.lastExportedAt
     ? `最近备份 ${formatDateTime(state.backup.lastExportedAt)}`
     : "尚未备份";
@@ -342,15 +380,17 @@ function renderReadiness() {
     insights.isDerived.regularHourlyRate ? `正班时薪 ${money(insights.regularHourlyRate)} 自动推算` : "",
     insights.isDerived.baseOvertimeRate ? `加班基数 ${money(insights.baseOvertimeRate)} 自动推算` : ""
   ].filter(Boolean).join("，");
+  const needsAttention = missing.length || integrityIssues.length;
+  const issueDates = integrityIssues.slice(0, 3).map((item) => item.date.slice(5)).join("、");
   return `
-    <section class="readiness ${missing.length ? "needs-attention" : ""}">
+    <section class="readiness ${needsAttention ? "needs-attention" : ""}">
       <div>
-        <strong>${missing.length ? `还差 ${missing.length} 项，工资可能算不准` : "工资规则已就绪"}</strong>
-        <span>${missing.length ? missing.join("、") : (derivedText || "每天记时间，系统会自动拆分正班和加班")}</span>
+        <strong>${integrityIssues.length ? `发现 ${integrityIssues.length} 天工时异常` : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : "工资规则已就绪")}</strong>
+        <span>${integrityIssues.length ? `${issueDates} 超过合理上限，请整理或编辑` : (missing.length ? missing.join("、") : (derivedText || "每天记时间，系统会自动拆分正班和加班"))}</span>
       </div>
       <div>
         <span>${backupText}</span>
-        <button class="plain-button" type="button" data-view="settings">规则</button>
+        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="settings">规则</button>`}
       </div>
     </section>
   `;
@@ -380,6 +420,7 @@ function renderCalendarView() {
           </div>
           ${ui.editingEntryId ? `<button class="plain-button" type="button" data-action="clear-edit">新增</button>` : ""}
         </div>
+        ${renderDayStatus(selectedEntries)}
         ${renderDayCommandBar()}
         ${renderEntryForm()}
         ${renderSelectedDayList(selectedEntries, selectedAdjustments)}
@@ -393,10 +434,34 @@ function renderDayCommandBar() {
   const autoAmount = Number(state.settings.autoAdjustment?.amount || 0);
   return `
     <div class="command-strip" aria-label="快速记录">
-      <button type="button" data-action="save-default-shift">套用${escapeHtml(preset?.name || "默认班次")}</button>
-      <button type="button" data-action="copy-previous">复制上次</button>
-      <button type="button" data-action="quick-overtime">只记加班</button>
-      <button type="button" data-action="add-day-adjustment">${autoAmount ? `补扣 ${money(autoAmount)}` : "补贴/扣款"}</button>
+      <button type="button" data-action="save-default-shift"><strong>套用${escapeHtml(preset?.name || "默认班次")}</strong><span>替换当天主记录</span></button>
+      <button type="button" data-action="copy-previous"><strong>复制上次</strong><span>替换当天主记录</span></button>
+      <button type="button" data-action="quick-overtime"><strong>加班 2h</strong><span>重复点击不叠加</span></button>
+      <button type="button" data-action="add-day-adjustment"><strong>${autoAmount ? `补扣 ${money(autoAmount)}` : "补贴/扣款"}</strong><span>记录奖罚餐补</span></button>
+    </div>
+  `;
+}
+
+function renderDayStatus(entries) {
+  const normalized = entries.map((entry) => normalizeEntry(entry, state.settings));
+  const totalHours = round2(normalized.reduce((sum, entry) => sum + entry.totalHours, 0));
+  const regularHours = round2(normalized.reduce((sum, entry) => sum + entry.regularHours, 0));
+  const overtimeHours = round2(normalized.reduce((sum, entry) => sum + entry.overtimeHours, 0));
+  const pay = round2(entries.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
+  const isWarning = totalHours > WORK_LIMITS.maxDayHours;
+  const text = entries.length
+    ? `${entries.length} 条记录，正班 ${regularHours}h，加班 ${overtimeHours}h`
+    : "当天还没有工时，先套班次或直接填时间";
+  return `
+    <div class="day-status ${isWarning ? "is-warning" : ""}">
+      <div>
+        <strong>${totalHours ? `${totalHours}h` : "未记录"}</strong>
+        <span>${text}</span>
+      </div>
+      <div>
+        <b>${money(pay)}</b>
+        <span>当天上限 ${WORK_LIMITS.maxDayHours}h</span>
+      </div>
     </div>
   `;
 }
@@ -463,18 +528,19 @@ function renderEntryForm() {
         <div class="form-grid">
           ${field("上班", `<input name="startTime" type="time" value="${escapeAttr(entry.startTime || "09:00")}">`)}
           ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}">`)}
-          ${field("休息分钟", `<input name="breakMinutes" type="number" min="0" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}">`)}
+          ${field("休息分钟", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}">`)}
         </div>
       </div>
       <div class="mode-fields hour-fields">
         <div class="form-grid">
-          ${field("正班小时", `<input name="regularHours" type="number" min="0" step="0.25" value="${escapeAttr(entry.regularHours ?? state.settings.normalHoursPerDay)}">`)}
-          ${field("加班小时", `<input name="overtimeHours" type="number" min="0" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
-          ${field("总小时", `<input name="totalHours" type="number" min="0" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
+          ${field("正班小时", `<input name="regularHours" type="number" min="0" max="${WORK_LIMITS.maxRegularHours}" step="0.25" value="${escapeAttr(entry.regularHours ?? state.settings.normalHoursPerDay)}">`)}
+          ${field("加班小时", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
+          ${field("总小时", `<input name="totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
         </div>
       </div>
       ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="本日目标">`)}
       ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="备注">${escapeHtml(entry.note || "")}</textarea>`)}
+      <div id="entry-error" class="form-error" role="alert" ${ui.entryError ? "" : "hidden"}>${escapeHtml(ui.entryError)}</div>
       <div class="form-footer">
         <output id="entry-preview">0h / ¥0.00</output>
         <button class="primary-button" type="submit">${editing ? "保存修改" : "保存记录"}</button>
@@ -730,25 +796,25 @@ function renderSettingsView() {
             </select>
           `)}
           <div class="form-grid">
-            ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25) : ""}
+            ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
             ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
-            ${modeFields.includes("standardMonthlyHours") ? numberField("月标准小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25) : ""}
+            ${modeFields.includes("standardMonthlyHours") ? numberField("月标准小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
             ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
             ${modeFields.includes("hourlyRate") ? numberField("小时工时薪", "hourlyRate", settings.hourlyRate, 0.01) : ""}
             ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
             ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
-            ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25) : ""}
+            ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
           </div>
           <div class="form-grid">
-            ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05)}
-            ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05)}
-            ${numberField("法定节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05)}
-            ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05)}
+            ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
+            ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
+            ${numberField("法定节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
+            ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
           </div>
           <h3>目标</h3>
           <div class="form-grid">
             ${numberField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome, 0.01)}
-            ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25)}
+            ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
           </div>
           <h3>班次</h3>
           ${field("默认班次", `
@@ -778,9 +844,9 @@ function renderSettingsView() {
             ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
             ${numberField("固定扣除", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01)}
             ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
-            ${numberField("扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01)}
+            ${numberField("扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 })}
             ${numberField("社保公积金固定", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01)}
-            ${numberField("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01)}
+            ${numberField("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 })}
           </div>
           <div class="form-footer">
             <label class="file-button">
@@ -801,6 +867,7 @@ function renderSettingsView() {
 function saveEntry(form) {
   const data = Object.fromEntries(new FormData(form));
   const existingId = data.id || ui.editingEntryId;
+  const existing = state.entries.find((item) => item.id === existingId);
   saveEntryObject({
     id: existingId || createId("entry"),
     date: data.date,
@@ -814,29 +881,40 @@ function saveEntry(form) {
     totalHours: Number(data.totalHours || 0),
     target: data.target.trim(),
     note: data.note.trim(),
+    source: existing?.source || "manual",
     updatedAt: new Date().toISOString(),
-    createdAt: state.entries.find((item) => item.id === existingId)?.createdAt || new Date().toISOString()
+    createdAt: existing?.createdAt || new Date().toISOString()
   }, "已保存工时记录");
 }
 
-function saveEntryObject(entry, notice) {
+function saveEntryObject(entry, notice, options = {}) {
+  const resolved = resolveEntryForSave(entry, options);
+  if (resolved.blocked) {
+    ui.entryError = resolved.message;
+    persist(resolved.message);
+    render();
+    return false;
+  }
+
   const normalizedEntry = {
     ...entry,
-    id: entry.id || createId("entry"),
+    id: resolved.id || entry.id || createId("entry"),
+    source: entry.source || options.source || "manual",
     updatedAt: new Date().toISOString(),
-    createdAt: entry.createdAt || new Date().toISOString()
+    createdAt: resolved.createdAt || entry.createdAt || new Date().toISOString()
   };
-  const normalized = normalizeEntry(entry, state.settings);
-  if (!normalizedEntry.date || normalized.totalHours < 0) {
-    persist("记录无效");
+  const validation = validateEntry(normalizedEntry, state.settings, state.entries);
+  if (!validation.valid) {
+    ui.entryError = validation.errors[0] || "记录无效";
+    persist(ui.entryError);
     render();
-    return;
+    return false;
   }
   const entryToSave = {
     ...normalizedEntry,
-    regularHours: normalized.regularHours,
-    overtimeHours: normalized.overtimeHours,
-    totalHours: normalized.totalHours
+    regularHours: validation.normalized.regularHours,
+    overtimeHours: validation.normalized.overtimeHours,
+    totalHours: validation.normalized.totalHours
   };
   state.entries = state.entries.filter((item) => item.id !== normalizedEntry.id).concat(entryToSave);
   state.entries.sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -845,8 +923,41 @@ function saveEntryObject(entry, notice) {
   ui.year = yearFromDate(normalizedEntry.date);
   ui.monthIndex = monthIndexFromDate(normalizedEntry.date);
   ui.editingEntryId = "";
-  persist(notice);
+  ui.entryError = "";
+  persist(validation.warnings[0] || notice);
   render();
+  return true;
+}
+
+function resolveEntryForSave(entry, options = {}) {
+  if (entry.id) {
+    const existing = state.entries.find((item) => item.id === entry.id);
+    if (existing) return { id: existing.id, createdAt: existing.createdAt };
+  }
+
+  const sameDate = state.entries.filter((item) => item.date === entry.date);
+  if (options.strategy === "replace-quick-overtime") {
+    const existing = sameDate.find((item) => isQuickOvertimeEntry(item));
+    return existing ? { id: existing.id, createdAt: existing.createdAt } : {};
+  }
+
+  if (options.strategy === "replace-main") {
+    const mainEntries = sameDate.filter((item) => !isQuickOvertimeEntry(item));
+    if (mainEntries.length > 1) {
+      return {
+        blocked: true,
+        message: "当天已有多条主记录，请编辑具体记录，避免误覆盖"
+      };
+    }
+    const existing = mainEntries[0];
+    return existing ? { id: existing.id, createdAt: existing.createdAt } : {};
+  }
+
+  return {};
+}
+
+function isQuickOvertimeEntry(entry = {}) {
+  return entry.source === "quick-overtime" || entry.note === "快速加班";
 }
 
 function saveAdjustment(form) {
@@ -888,7 +999,7 @@ function saveSettings(form) {
     }
     setDeep(next, key, value === "" ? 0 : Number.isNaN(Number(value)) ? value : Number(value));
   }
-  state.settings = mergeSettings(next);
+  state.settings = limitSettings(next);
   persist("已保存设置");
   render();
 }
@@ -896,6 +1007,7 @@ function saveSettings(form) {
 function updateEntryPreview() {
   const form = document.querySelector("#entry-form");
   const output = document.querySelector("#entry-preview");
+  const errorBox = document.querySelector("#entry-error");
   if (!form || !output) return;
   const data = Object.fromEntries(new FormData(form));
   const recordMode = data.recordMode || RECORD_MODES.TIME;
@@ -909,6 +1021,7 @@ function updateEntryPreview() {
   }
   const entry = {
     ...data,
+    id: data.id || ui.editingEntryId,
     recordMode,
     breakMinutes: Number(data.breakMinutes || 0),
     regularHours: Number(data.regularHours || 0),
@@ -917,7 +1030,16 @@ function updateEntryPreview() {
   };
   const normalized = normalizeEntry(entry, state.settings);
   const pay = calculateEntryPay(entry, state.settings);
-  output.textContent = `${normalized.totalHours}h / ${money(pay.totalPay)}`;
+  const validation = validateEntry(entry, state.settings, state.entries);
+  output.textContent = validation.valid
+    ? `${normalized.totalHours}h / ${money(pay.totalPay)}`
+    : `${normalized.totalHours}h / 不可保存`;
+  const message = ui.entryError || validation.errors[0] || validation.warnings[0] || "";
+  if (errorBox) {
+    errorBox.hidden = !message;
+    errorBox.textContent = message;
+    errorBox.classList.toggle("is-warning", validation.valid && Boolean(validation.warnings[0]) && !ui.entryError);
+  }
 }
 
 function applyPresetToForm(presetId) {
@@ -954,7 +1076,12 @@ function copyPreviousEntry() {
     return;
   }
   const { id, createdAt, updatedAt, ...rest } = previous;
-  saveEntryObject({ ...rest, date: ui.selectedDate, note: previous.note || "复制上次" }, "已复制上次记录");
+  saveEntryObject({
+    ...rest,
+    date: ui.selectedDate,
+    note: previous.note || "复制上次",
+    source: "copied"
+  }, "已复制上次记录", { strategy: "replace-main" });
 }
 
 function addAutoAdjustment(date, notice = "") {
@@ -989,14 +1116,23 @@ function bulkGenerateMonth() {
     if (existing.has(date)) continue;
     const entry = buildEntryFromShiftPreset(date, preset, {
       settings: state.settings,
-      dayType: inferDayType(date, state.settings)
+      dayType: inferDayType(date, state.settings),
+      source: "bulk"
     });
-    state.entries.push({
+    const entryToSave = {
       ...entry,
       id: createId("entry"),
       note: entry.note || "批量生成",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
+    };
+    const validation = validateEntry(entryToSave, state.settings, state.entries);
+    if (!validation.valid) continue;
+    state.entries.push({
+      ...entryToSave,
+      regularHours: validation.normalized.regularHours,
+      overtimeHours: validation.normalized.overtimeHours,
+      totalHours: validation.normalized.totalHours
     });
     addAutoAdjustment(date);
     count += 1;
@@ -1108,11 +1244,107 @@ function groupByDate(items) {
   return map;
 }
 
+function findEntryIntegrityIssues() {
+  const issues = [];
+  const entriesByDate = groupByDate(state.entries);
+  for (const [date, entries] of entriesByDate.entries()) {
+    const total = round2(entries.reduce((sum, entry) => sum + normalizeEntry(entry, state.settings).totalHours, 0));
+    const invalidEntry = entries.find((entry) => !validateEntry(entry, state.settings, []).valid);
+    if (total > WORK_LIMITS.maxDayHours || invalidEntry) {
+      issues.push({ date, total, count: entries.length });
+    }
+  }
+  return issues.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function repairRepeatedEntries() {
+  const byKey = new Map();
+  const repaired = [];
+  let removed = 0;
+
+  for (const rawEntry of state.entries) {
+    const entry = normalizeLegacySource(rawEntry);
+    const key = duplicateEntryKey(entry);
+    if (!key) {
+      repaired.push(entry);
+      continue;
+    }
+    const previousIndex = byKey.get(key);
+    if (previousIndex === undefined) {
+      byKey.set(key, repaired.length);
+      repaired.push(entry);
+      continue;
+    }
+    const previous = repaired[previousIndex];
+    repaired[previousIndex] = newerEntry(previous, entry);
+    removed += 1;
+  }
+
+  if (removed) {
+    state.entries = repaired.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+  return removed;
+}
+
+function normalizeLegacySource(entry) {
+  if (entry.source) return entry;
+  if (entry.note === "快速加班") return { ...entry, source: "quick-overtime" };
+  if (entry.note === "批量生成") return { ...entry, source: "bulk" };
+  if (entry.note === "复制上次") return { ...entry, source: "copied" };
+  return entry;
+}
+
+function duplicateEntryKey(entry) {
+  if (!entry.date) return "";
+  if (isQuickOvertimeEntry(entry)) return `${entry.date}|quick-overtime`;
+  const normalized = normalizeEntry(entry, state.settings);
+  return [
+    entry.date,
+    entry.recordMode || RECORD_MODES.TIME,
+    normalized.dayType,
+    entry.startTime || "",
+    entry.endTime || "",
+    Number(entry.breakMinutes || 0),
+    normalized.regularHours,
+    normalized.overtimeHours,
+    normalized.totalHours,
+    entry.target || "",
+    entry.note || ""
+  ].join("|");
+}
+
+function newerEntry(left, right) {
+  const leftTime = new Date(left.updatedAt || left.createdAt || 0).getTime();
+  const rightTime = new Date(right.updatedAt || right.createdAt || 0).getTime();
+  return rightTime >= leftTime ? { ...left, ...right, id: left.id || right.id } : left;
+}
+
 function settingsFieldsForMode(mode) {
   if (mode === SALARY_MODES.HOURLY) return ["hourlyRate"];
   if (mode === SALARY_MODES.COMPREHENSIVE) return ["comprehensiveHourlyRate", "comprehensiveTargetHours"];
   if (mode === SALARY_MODES.BASE_OVERTIME) return ["baseSalary", "standardMonthlyHours", "baseOvertimeRate"];
   return ["normalHoursPerDay", "baseSalary", "standardMonthlyHours", "regularHourlyRate"];
+}
+
+function limitSettings(settings) {
+  const next = mergeSettings(settings);
+  next.normalHoursPerDay = boundedNumber(next.normalHoursPerDay, 0, WORK_LIMITS.maxRegularHours);
+  next.standardMonthlyHours = boundedNumber(next.standardMonthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
+  next.comprehensiveTargetHours = boundedNumber(next.comprehensiveTargetHours, 0, WORK_LIMITS.maxMonthlyHours);
+  next.goals.monthlyHours = boundedNumber(next.goals.monthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
+  next.overtimeMultiplier = boundedNumber(next.overtimeMultiplier, 0, 5);
+  next.restDayMultiplier = boundedNumber(next.restDayMultiplier, 0, 5);
+  next.holidayMultiplier = boundedNumber(next.holidayMultiplier, 0, 5);
+  next.comprehensiveOvertimeMultiplier = boundedNumber(next.comprehensiveOvertimeMultiplier, 0, 5);
+  next.tax.deductionPercent = boundedNumber(next.tax.deductionPercent, 0, 100);
+  next.tax.socialSecurityPercent = boundedNumber(next.tax.socialSecurityPercent, 0, 100);
+  return next;
+}
+
+function boundedNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, number));
 }
 
 function renderPresetEditor(preset, index) {
@@ -1123,8 +1355,8 @@ function renderPresetEditor(preset, index) {
       ${field("方式", `<select name="shiftPresets.${index}.recordMode">${option(RECORD_MODES.TIME, "时间", preset.recordMode)}${option(RECORD_MODES.HOURS, "工时", preset.recordMode)}</select>`)}
       ${field("上班", `<input name="shiftPresets.${index}.startTime" type="time" value="${escapeAttr(preset.startTime)}">`)}
       ${field("下班", `<input name="shiftPresets.${index}.endTime" type="time" value="${escapeAttr(preset.endTime)}">`)}
-      ${field("休息", `<input name="shiftPresets.${index}.breakMinutes" type="number" min="0" step="1" value="${escapeAttr(preset.breakMinutes)}">`)}
-      ${field("总小时", `<input name="shiftPresets.${index}.totalHours" type="number" min="0" step="0.25" value="${escapeAttr(preset.totalHours)}">`)}
+      ${field("休息", `<input name="shiftPresets.${index}.breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(preset.breakMinutes)}">`)}
+      ${field("总小时", `<input name="shiftPresets.${index}.totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(preset.totalHours)}">`)}
     </div>
   `;
 }
@@ -1155,8 +1387,10 @@ function field(label, control) {
   return `<label class="field"><span>${label}</span>${control}</label>`;
 }
 
-function numberField(label, name, value, step) {
-  return field(label, `<input name="${escapeAttr(name)}" type="number" min="0" step="${step}" value="${escapeAttr(value)}">`);
+function numberField(label, name, value, step, options = {}) {
+  const min = options.min ?? 0;
+  const max = options.max === undefined ? "" : ` max="${escapeAttr(options.max)}"`;
+  return field(label, `<input name="${escapeAttr(name)}" type="number" min="${escapeAttr(min)}"${max} step="${step}" value="${escapeAttr(value)}">`);
 }
 
 function radio(name, value, label, current) {

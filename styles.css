@@ -258,7 +258,7 @@ h3 {
 .insight-panel p,
 .bulk-panel span,
 .preset-grid span,
-.command-strip button {
+.command-strip span {
   color: var(--muted);
 }
 
@@ -317,17 +317,32 @@ h3 {
 }
 
 .command-strip button {
-  min-height: 42px;
+  min-height: 58px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   font-weight: 700;
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  text-align: left;
 }
 
 .command-strip button:first-child {
   border-color: rgba(23, 107, 91, 0.35);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.command-strip strong,
+.command-strip span {
+  display: block;
+}
+
+.command-strip span {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .detail-panel {
@@ -428,6 +443,46 @@ h3 {
 .tool-form {
   display: grid;
   gap: 14px;
+}
+
+.day-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(23, 107, 91, 0.2);
+  border-radius: 8px;
+  background: #f4fbf8;
+}
+
+.day-status.is-warning {
+  border-color: rgba(180, 61, 66, 0.32);
+  background: #fff7f2;
+}
+
+.day-status div {
+  display: grid;
+  gap: 3px;
+}
+
+.day-status div:last-child {
+  justify-items: end;
+}
+
+.day-status strong {
+  font-size: 24px;
+}
+
+.day-status b {
+  color: var(--accent);
+}
+
+.day-status span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .preset-grid {
@@ -550,6 +605,23 @@ button:focus-visible {
 output {
   font-weight: 800;
   color: var(--accent);
+}
+
+.form-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(180, 61, 66, 0.28);
+  border-radius: 8px;
+  background: #fff7f2;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.form-error.is-warning {
+  border-color: rgba(191, 111, 47, 0.28);
+  background: #fff9ed;
+  color: #8a4f20;
 }
 
 .day-lists {
@@ -908,6 +980,14 @@ output {
 
   .metric-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .day-status {
+    grid-template-columns: 1fr;
+  }
+
+  .day-status div:last-child {
+    justify-items: start;
   }
 
   .form-grid {

@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  RECORD_MODES,
   SALARY_MODES,
+  WORK_LIMITS,
   calculateAnnualTax,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
@@ -11,7 +13,8 @@ import {
   buildEntryFromShiftPreset,
   mergeSettings,
   normalizeEntry,
-  deriveSalaryInsights
+  deriveSalaryInsights,
+  validateEntry
 } from "../src/calculations.js";
 
 test("time records subtract breaks and support overnight shifts", () => {
@@ -156,6 +159,69 @@ test("hourly mode pays all hours at hourly rate", () => {
     totalHours: 7.5
   }, settings);
   assert.equal(pay.totalPay, 240);
+});
+
+test("manual hour records use regular plus overtime as the source of truth", () => {
+  const entry = normalizeEntry({
+    date: "2026-05-04",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 2,
+    totalHours: 200
+  });
+  assert.equal(entry.totalHours, 10);
+  assert.equal(entry.overtimeHours, 2);
+});
+
+test("entry validation rejects unrealistic hours and invalid time ranges", () => {
+  const tooLarge = validateEntry({
+    date: "2026-05-04",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 200,
+    totalHours: 200
+  });
+  assert.equal(tooLarge.valid, false);
+  assert.match(tooLarge.errors.join(" "), /单条记录不能超过/);
+  assert.match(tooLarge.errors.join(" "), /单条加班不能超过/);
+
+  const sameTime = validateEntry({
+    date: "2026-05-04",
+    recordMode: RECORD_MODES.TIME,
+    dayType: "workday",
+    startTime: "09:00",
+    endTime: "09:00",
+    breakMinutes: 0
+  });
+  assert.equal(sameTime.valid, false);
+  assert.match(sameTime.errors.join(" "), /上下班时间不能相同/);
+});
+
+test("entry validation checks daily aggregate limits", () => {
+  const result = validateEntry({
+    id: "new",
+    date: "2026-05-05",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 4,
+    totalHours: 4
+  }, mergeSettings(), [
+    {
+      id: "existing",
+      date: "2026-05-05",
+      recordMode: RECORD_MODES.HOURS,
+      dayType: "workday",
+      regularHours: 8,
+      overtimeHours: WORK_LIMITS.maxDayHours - 8,
+      totalHours: WORK_LIMITS.maxDayHours
+    }
+  ]);
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join(" "), /当天合计不能超过/);
 });
 
 test("buildEntryFromShiftPreset supports defaults, rest days, and overnight shifts", () => {

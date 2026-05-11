@@ -10,6 +10,15 @@ export const RECORD_MODES = {
   HOURS: "hours"
 };
 
+export const WORK_LIMITS = {
+  maxEntryHours: 16,
+  maxDayHours: 20,
+  maxRegularHours: 12,
+  maxOvertimeHours: 12,
+  maxBreakMinutes: 720,
+  maxMonthlyHours: 360
+};
+
 export const DEFAULT_SETTINGS = {
   currency: "CNY",
   salaryMode: SALARY_MODES.REGULAR_OVERTIME,
@@ -120,6 +129,10 @@ export function clampNumber(value, min = 0, fallback = 0) {
   return Math.max(min, number);
 }
 
+export function clampNumberMax(value, min = 0, max = Number.POSITIVE_INFINITY, fallback = 0) {
+  return Math.min(max, clampNumber(value, min, fallback));
+}
+
 export function normalizeShiftPresets(presets = DEFAULT_SETTINGS.shiftPresets) {
   const normalized = Array.isArray(presets) ? presets : DEFAULT_SETTINGS.shiftPresets;
   return normalized.map((preset, index) => ({
@@ -129,10 +142,10 @@ export function normalizeShiftPresets(presets = DEFAULT_SETTINGS.shiftPresets) {
     dayType: preset.dayType || "workday",
     startTime: preset.startTime || "09:00",
     endTime: preset.endTime || "18:00",
-    breakMinutes: clampNumber(preset.breakMinutes, 0),
-    regularHours: clampNumber(preset.regularHours, 0),
-    overtimeHours: clampNumber(preset.overtimeHours, 0),
-    totalHours: clampNumber(preset.totalHours, 0)
+    breakMinutes: clampNumberMax(preset.breakMinutes, 0, WORK_LIMITS.maxBreakMinutes),
+    regularHours: clampNumberMax(preset.regularHours, 0, WORK_LIMITS.maxRegularHours),
+    overtimeHours: clampNumberMax(preset.overtimeHours, 0, WORK_LIMITS.maxOvertimeHours),
+    totalHours: clampNumberMax(preset.totalHours, 0, WORK_LIMITS.maxEntryHours)
   }));
 }
 
@@ -258,8 +271,9 @@ export function normalizeEntry(entry = {}, settings = DEFAULT_SETTINGS) {
   } else {
     regularHours = clampNumber(entry.regularHours, 0);
     overtimeHours = clampNumber(entry.overtimeHours, 0);
-    totalHours = clampNumber(entry.totalHours, 0, regularHours + overtimeHours);
-    if (totalHours === 0) totalHours = regularHours + overtimeHours;
+    const detailTotal = regularHours + overtimeHours;
+    const explicitTotal = clampNumber(entry.totalHours, 0, detailTotal);
+    totalHours = detailTotal > 0 ? detailTotal : explicitTotal;
   }
 
   return {
@@ -285,20 +299,25 @@ export function buildEntryFromShiftPreset(date, preset = {}, overrides = {}) {
     ...overrides,
     date: overrides.date || date || preset.date
   };
-  const normalHoursPerDay = clampNumber(source.normalHoursPerDay, 0, DEFAULT_SETTINGS.normalHoursPerDay);
+  const normalHoursPerDay = clampNumber(
+    source.normalHoursPerDay ?? source.settings?.normalHoursPerDay,
+    0,
+    DEFAULT_SETTINGS.normalHoursPerDay
+  );
   const entry = {
     date: source.date,
     recordMode: source.recordMode || RECORD_MODES.TIME,
     dayType: source.dayType || "workday",
     startTime: source.startTime,
     endTime: source.endTime,
-    breakMinutes: clampNumber(source.breakMinutes, 0),
-    regularHours: clampNumber(source.regularHours, 0),
-    overtimeHours: clampNumber(source.overtimeHours, 0),
-    totalHours: clampNumber(source.totalHours, 0),
+    breakMinutes: clampNumberMax(source.breakMinutes, 0, WORK_LIMITS.maxBreakMinutes),
+    regularHours: clampNumberMax(source.regularHours, 0, WORK_LIMITS.maxRegularHours),
+    overtimeHours: clampNumberMax(source.overtimeHours, 0, WORK_LIMITS.maxOvertimeHours),
+    totalHours: clampNumberMax(source.totalHours, 0, WORK_LIMITS.maxEntryHours),
     target: source.target || "",
     note: source.note || ""
   };
+  if (source.source) entry.source = source.source;
 
   if (entry.recordMode === RECORD_MODES.TIME) {
     entry.totalHours = calculateTimeHours(entry.startTime, entry.endTime, entry.breakMinutes);
@@ -310,6 +329,74 @@ export function buildEntryFromShiftPreset(date, preset = {}, overrides = {}) {
   }
 
   return entry;
+}
+
+export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingEntries = []) {
+  const merged = mergeSettings(settings);
+  const normalized = normalizeEntry(entry, merged);
+  const errors = [];
+  const warnings = [];
+  const date = String(entry.date || "");
+  const recordMode = entry.recordMode || RECORD_MODES.TIME;
+  const dayType = entry.dayType || "workday";
+  const sameDateEntries = existingEntries.filter((item) => item.date === date && item.id !== entry.id);
+  const sameMonthEntries = existingEntries.filter((item) => {
+    return monthKeyFromDate(item.date) === monthKeyFromDate(date) && item.id !== entry.id;
+  });
+  const existingDayTotal = sameDateEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
+  const existingMonthTotal = sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
+  const dailyTotal = round2(existingDayTotal + normalized.totalHours);
+  const monthlyTotal = round2(existingMonthTotal + normalized.totalHours);
+
+  if (!isValidDateString(date)) errors.push("请选择有效日期");
+  if (![RECORD_MODES.TIME, RECORD_MODES.HOURS].includes(recordMode)) errors.push("请选择正确的记录方式");
+  if (!["workday", "restday", "holiday"].includes(dayType)) errors.push("请选择正确的日期类型");
+
+  if (recordMode === RECORD_MODES.TIME) {
+    const start = parseTimeToMinutes(entry.startTime);
+    const end = parseTimeToMinutes(entry.endTime);
+    const breakMinutes = Number(entry.breakMinutes || 0);
+    if (start === null || end === null) errors.push("请填写有效的上下班时间");
+    if (start !== null && end !== null && start === end) errors.push("上下班时间不能相同");
+    if (!Number.isFinite(breakMinutes) || breakMinutes < 0) errors.push("休息时间不能为负数");
+    if (breakMinutes > WORK_LIMITS.maxBreakMinutes) errors.push(`单次休息不能超过 ${WORK_LIMITS.maxBreakMinutes / 60} 小时`);
+  } else {
+    const regularHours = Number(entry.regularHours || 0);
+    const overtimeHours = Number(entry.overtimeHours || 0);
+    const totalHours = Number(entry.totalHours || 0);
+    if ([regularHours, overtimeHours, totalHours].some((value) => !Number.isFinite(value) || value < 0)) {
+      errors.push("工时不能为负数或无效数字");
+    }
+    if (totalHours > 0 && regularHours + overtimeHours > 0 && Math.abs(totalHours - regularHours - overtimeHours) > 0.01) {
+      warnings.push("总小时会按正班小时 + 加班小时重新计算");
+    }
+  }
+
+  if (normalized.totalHours <= 0) errors.push("工时必须大于 0");
+  if (normalized.totalHours > WORK_LIMITS.maxEntryHours) {
+    errors.push(`单条记录不能超过 ${WORK_LIMITS.maxEntryHours} 小时`);
+  }
+  if (normalized.regularHours > WORK_LIMITS.maxRegularHours) {
+    errors.push(`单条正班不能超过 ${WORK_LIMITS.maxRegularHours} 小时`);
+  }
+  if (normalized.overtimeHours > WORK_LIMITS.maxOvertimeHours) {
+    errors.push(`单条加班不能超过 ${WORK_LIMITS.maxOvertimeHours} 小时`);
+  }
+  if (dailyTotal > WORK_LIMITS.maxDayHours) {
+    errors.push(`当天合计不能超过 ${WORK_LIMITS.maxDayHours} 小时，当前将达到 ${dailyTotal} 小时`);
+  }
+  if (monthlyTotal > WORK_LIMITS.maxMonthlyHours) {
+    warnings.push(`本月工时将达到 ${monthlyTotal} 小时，请确认排班是否真实`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors: [...new Set(errors)],
+    warnings: [...new Set(warnings)],
+    normalized,
+    dailyTotal,
+    monthlyTotal
+  };
 }
 
 export function overtimeMultiplierForDay(dayType, settings = DEFAULT_SETTINGS) {
@@ -550,4 +637,10 @@ export function formatDate(date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isValidDateString(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00`);
+  return !Number.isNaN(parsed.getTime()) && formatDate(parsed) === value;
 }
