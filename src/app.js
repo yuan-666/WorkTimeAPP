@@ -39,6 +39,9 @@ import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js";
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
+const APP_VERSION = "v0.2.5";
+const RELEASE_COUNT = 15;
+const CLOUD_API_BASE = "/api/cloud";
 let state = loadState();
 let ui = {
   view: state.activeView || "calendar",
@@ -63,8 +66,7 @@ if (repairedOnLoad) {
 }
 
 const MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
-const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WEEKDAY_NAMES = ["日", "一", "二", "三", "四", "五", "六"];
 const MODE_LABELS = {
   [SALARY_MODES.REGULAR_OVERTIME]: "正班+加班",
   [SALARY_MODES.BASE_OVERTIME]: "底薪+加班",
@@ -92,6 +94,7 @@ const LEAVE_TYPES = {
   other: "其他请假"
 };
 
+applyTheme();
 render();
 
 document.addEventListener("click", async (event) => {
@@ -200,6 +203,18 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
+  if (action === "toggle-theme") {
+    const current = state.settings.themeMode || "system";
+    const nextMode = current === "system" ? "light" : (current === "light" ? "dark" : "system");
+    state.settings = limitSettings({
+      ...state.settings,
+      themeMode: nextMode
+    });
+    applyTheme();
+    persist(`已切换为${themeModeLabel(nextMode)}`);
+    render();
+  }
+
   if (action === "skip-setup") {
     state.settings._wizardDone = true;
     persist();
@@ -241,6 +256,11 @@ document.addEventListener("click", async (event) => {
     exportBackup(state);
     persist("已导出备份");
     render();
+  }
+
+  if (action?.startsWith("cloud-")) {
+    await handleCloudAction(action);
+    return;
   }
 
   if (action === "repair-records") {
@@ -290,6 +310,7 @@ document.addEventListener("input", (event) => {
     }
     updateEntryPreview();
   }
+  if (event.target.closest("#setup-form")) updateSetupPreview();
   if (event.target.closest("#bulk-form")) updateBulkPreview();
 
   // Records filter
@@ -380,8 +401,15 @@ if ("serviceWorker" in navigator) {
 
 function render() {
   state.settings = limitSettings(state.settings);
+  applyTheme();
+  if (!["calendar", "records", "reports", "settings"].includes(ui.view)) {
+    ui.view = "calendar";
+    state.activeView = ui.view;
+    saveState(state);
+  }
   if (shouldShowSetupWizard()) {
     app.innerHTML = renderSetupWizard();
+    updateSetupPreview();
     return;
   }
   app.innerHTML = `
@@ -437,9 +465,9 @@ function renderSetupWizard() {
             <h2>2. 填写基本薪资</h2>
             <p class="setup-hint">这些数字可以随时在设置里改</p>
             <div class="form-grid">
-              ${modeFields.includes("baseSalary") ? numberField("月薪（底薪）", "baseSalary", 6000, 100) : ""}
+              ${modeFields.includes("baseSalary") ? moneyField("月薪（底薪）", "baseSalary", 6000) : ""}
               ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", 174, 1) : ""}
-              ${modeFields.includes("hourlyRate") ? numberField("时薪", "hourlyRate", 0, 1) : ""}
+              ${modeFields.includes("hourlyRate") ? moneyField("时薪", "hourlyRate", 0) : ""}
             </div>
           </div>
 
@@ -451,10 +479,14 @@ function renderSetupWizard() {
               ${field("下班时间", `<input name="endTime" type="time" value="18:00" required>`)}
               ${field("午休（分钟）", `<input name="breakMinutes" type="number" min="0" max="120" step="1" value="60">`)}
             </div>
+            <output id="setup-time-preview" class="setup-time-preview" aria-live="polite"></output>
           </div>
 
           <div class="setup-footer">
-            <button class="plain-button" type="button" data-action="skip-setup">稍后设置</button>
+            <div class="button-row">
+              <button class="plain-button" type="button" data-action="toggle-theme">${themeModeLabel(state.settings.themeMode)}</button>
+              <button class="plain-button" type="button" data-action="skip-setup">稍后设置</button>
+            </div>
             <button class="primary-button" type="submit">开始使用</button>
           </div>
         </form>
@@ -489,7 +521,7 @@ function renderSidebar() {
         ${navButton("reports", "报表")}
         ${navButton("settings", "设置")}
       </nav>
-      <div class="privacy-note">数据保存在本机浏览器。</div>
+      ${renderAppFooter()}
     </aside>
   `;
 }
@@ -522,6 +554,7 @@ function renderTopbar() {
         <h1>${ui.viewTitle || viewTitle(ui.view)}</h1>
       </div>
       <div class="month-controls" aria-label="月份切换">
+        <button class="plain-button theme-button" type="button" data-action="toggle-theme">${themeModeLabel(state.settings.themeMode)}</button>
         <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
         <button class="plain-button" type="button" data-action="today">今天</button>
         <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
@@ -540,10 +573,13 @@ function renderReadiness() {
   const insights = deriveSalaryInsights(state.settings);
   const missing = insights.missingConfig.map((key) => MISSING_LABELS[key] || key);
   const integrityIssues = findEntryIntegrityIssues();
-  const restReminder = calculateRestReminder(today, state.settings);
+  const restReminder = calculateRestReminder(today, state.settings, state.entries);
   const backupText = state.backup?.lastExportedAt
     ? `最近备份 ${formatDateTime(state.backup.lastExportedAt)}`
     : "尚未备份";
+  const cloudText = state.cloud?.lastSyncAt
+    ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}`
+    : (state.cloud?.userId ? "云端已登录" : "云端未登录");
   const derivedText = [
     insights.isDerived.regularHourlyRate ? `正班时薪 ${money(insights.regularHourlyRate)} 自动推算` : "",
     insights.isDerived.baseOvertimeRate ? `加班基数 ${money(insights.baseOvertimeRate)} 自动推算` : "",
@@ -565,7 +601,7 @@ function renderReadiness() {
         <span>${detail}</span>
       </div>
       <div>
-        <span>${backupText}</span>
+        <span>${backupText} · ${cloudText}</span>
         ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="settings">规则</button>`}
       </div>
     </section>
@@ -575,10 +611,9 @@ function renderReadiness() {
 function renderUnloggedPanel() {
   const unlogged = getUnloggedDays(ui.year, ui.monthIndex, state.entries, state.settings);
   if (!unlogged.length) return "";
-  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
   const items = unlogged.map((date) => {
     const d = new Date(`${date}T00:00:00`);
-    const wd = weekdays[d.getDay()];
+    const wd = weekLabelByIndex(d.getDay());
     const md = date.slice(5).replace("-", "/");
     return `<button class="unlogged-item" type="button" data-date="${date}"><span>${md}</span><small>周${wd}</small></button>`;
   }).join("");
@@ -595,7 +630,7 @@ function renderUnloggedPanel() {
 }
 
 function renderCalendarView() {
-  const days = buildCalendarDays(ui.year, ui.monthIndex);
+  const days = buildCalendarDays(ui.year, ui.monthIndex, state.settings.weekStart);
   const entriesByDate = groupByDate(state.entries);
   const adjustmentsByDate = groupByDate(state.adjustments);
   const selectedEntries = entriesForDate(ui.selectedDate);
@@ -605,7 +640,7 @@ function renderCalendarView() {
       ${renderUnloggedPanel()}
       <section class="calendar-panel" aria-label="日历">
         <div class="weekday-grid">
-          ${WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}
+          ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
         </div>
         <div class="calendar-grid">
           ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
@@ -661,7 +696,7 @@ function renderDayStatus(entries) {
 }
 
 function renderRestReminderCard(date) {
-  const reminder = calculateRestReminder(date, state.settings);
+  const reminder = calculateRestReminder(date, state.settings, state.entries);
   const text = reminder.requiresAnchor
     ? "设置上一次休息日后，系统会按你的排班反推下一次该休息的日子。"
     : `${reminder.detail}${reminder.nextRestDate ? ` · 下次 ${reminder.nextRestDate}` : ""}`;
@@ -938,7 +973,7 @@ function renderLeaveFields(entry) {
       <div class="form-grid">
         ${fieldWithClass("计薪倍数", `<input name="leavePayMultiplier" type="number" min="0" step="0.1" value="${escapeAttr(entry.leavePayMultiplier ?? 1)}" inputmode="decimal" enterkeyhint="done">`, "leave-multiplier-field")}
         ${field("请假小时", `<input name="leaveHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.leaveHours ?? state.settings.normalHoursPerDay)}" inputmode="decimal" enterkeyhint="done">`)}
-        ${fieldWithClass("扣工资金额", `<input name="leaveDeductionAmount" type="number" min="0" step="0.01" value="${escapeAttr(entry.leaveDeductionAmount || 0)}" inputmode="decimal" enterkeyhint="done">`, "leave-deduction-field")}
+        ${moneyFieldWithClass("扣工资金额", "leaveDeductionAmount", entry.leaveDeductionAmount || 0, "leave-deduction-field")}
       </div>
       <div class="time-preview" id="time-preview" aria-live="polite"></div>
       <small class="helper">年假通常选带薪；事假可选不计薪或扣工资；病假可按你的工资规则填倍数。</small>
@@ -1201,7 +1236,7 @@ function renderAdjustmentForm() {
         `)}
       </div>
       <div class="form-grid">
-        ${field("金额", `<input name="amount" type="number" min="0" step="0.01" value="0" required>`)}
+        ${moneyField("金额", "amount", 0, { required: true })}
         ${field("分类", `<input name="category" type="text" maxlength="30" placeholder="餐补 / 罚款 / 奖金">`)}
       </div>
       ${field("备注", `<textarea name="note" rows="3" maxlength="160"></textarea>`)}
@@ -1335,9 +1370,7 @@ function renderWeeklyTrend(yearSummary, year, monthIndex) {
   const weeks = new Map();
   for (const entry of entries) {
     const d = new Date(`${entry.date}T00:00:00`);
-    const weekStart = new Date(d);
-    weekStart.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-    const key = formatDate(weekStart);
+    const key = weekStartDate(entry.date, state.settings.weekStart);
     if (!weeks.has(key)) weeks.set(key, { hours: 0, label: key.slice(5) });
     weeks.get(key).hours += normalizeEntry(entry, state.settings).totalHours;
   }
@@ -1359,6 +1392,36 @@ function renderWeeklyTrend(yearSummary, year, monthIndex) {
       <span class="weekly-trend-title">周工时趋势</span>
       <div class="weekly-bars">${bars}</div>
     </div>
+  `;
+}
+
+function renderAppFooter() {
+  const year = new Date().getFullYear();
+  return `
+    <footer class="sidebar-footer" aria-label="页脚">
+      <a class="sidebar-release-link" href="./changelog.html" aria-label="查看更新日志">
+        <span class="footer-stat">
+          <strong>${APP_VERSION}</strong>
+          <em>当前版本</em>
+        </span>
+        <span class="footer-stat">
+          <strong>${RELEASE_COUNT}</strong>
+          <em>次更新</em>
+        </span>
+        <span class="footer-stat-action">日志</span>
+      </a>
+      <div class="sidebar-footer-bottom">
+        <span>© ${year} yuan 版权所有</span>
+        <div class="sidebar-footer-links">
+          <a class="footer-icon-link" href="https://github.com/yuan-666/WorkTimeAPP" target="_blank" rel="noopener" aria-label="GitHub">
+            <svg width="18" height="18" aria-hidden="true"><use href="./assets/social-icons.svg#github-icon"></use></svg>
+          </a>
+          <a class="footer-icon-link" href="https://yuan6.cn" target="_blank" rel="noopener" aria-label="友情链接：yuan6.cn">
+            <svg width="18" height="18" aria-hidden="true"><use href="./assets/social-icons.svg#blog-icon"></use></svg>
+          </a>
+        </div>
+      </div>
+    </footer>
   `;
 }
 
@@ -1400,12 +1463,12 @@ function renderSettingsView() {
               `)}
               <div class="form-grid">
                 ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
-                ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
+                ${modeFields.includes("baseSalary") ? moneyField("底薪", "baseSalary", settings.baseSalary) : ""}
                 ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-                ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
-                ${modeFields.includes("hourlyRate") ? numberField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate, 0.01) : ""}
-                ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
-                ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
+                ${modeFields.includes("regularHourlyRate") ? moneyField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate) : ""}
+                ${modeFields.includes("hourlyRate") ? moneyField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate) : ""}
+                ${modeFields.includes("baseOvertimeRate") ? moneyField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate) : ""}
+                ${modeFields.includes("comprehensiveHourlyRate") ? moneyField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate) : ""}
                 ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
               </div>
             </div>
@@ -1433,7 +1496,7 @@ function renderSettingsView() {
             </summary>
             <div class="settings-group-body">
               <div class="form-grid">
-                ${numberField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome, 0.01)}
+                ${moneyField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome)}
                 ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
               </div>
             </div>
@@ -1459,11 +1522,29 @@ function renderSettingsView() {
           <details class="settings-group">
             <summary class="settings-group-title">
               <span>工作日与假期</span>
-              <small>${settings.workweek.map((d) => weekLabelByIndex(d)).join("")} 休息</small>
+              <small>${restCycleLabel(settings.restCycle.mode)} · 周${weekLabelByIndex(settings.weekStart)}开周</small>
             </summary>
             <div class="settings-group-body">
-              <div class="workweek-grid">
-                ${WEEKDAY_ORDER.map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), weekLabelByIndex(weekday), settings.workweek.includes(weekday))).join("")}
+              <div class="form-grid">
+                ${field("每周从哪天开始", `
+                  <select name="weekStart">
+                    ${weekdayOrder(1).map((day) => option(String(day), `周${weekLabelByIndex(day)}`, String(settings.weekStart))).join("")}
+                  </select>
+                `)}
+                ${field("休假方式", `
+                  <select name="restCycle.mode">
+                    ${option(REST_CYCLE_MODES.DOUBLE_WEEKEND, "每周双休（周六周日）", settings.restCycle.mode)}
+                    ${option(REST_CYCLE_MODES.SINGLE_SUNDAY, "每周单休（周日）", settings.restCycle.mode)}
+                    ${option(REST_CYCLE_MODES.WORKWEEK, "自定义每周休息日", settings.restCycle.mode)}
+                    ${option(REST_CYCLE_MODES.WORK_6_REST_1, "上六休一", settings.restCycle.mode)}
+                    ${option(REST_CYCLE_MODES.WORK_14_REST_1, "上十四休一", settings.restCycle.mode)}
+                    ${option(REST_CYCLE_MODES.CUSTOM, "自定义连续周期", settings.restCycle.mode)}
+                  </select>
+                `)}
+              </div>
+              <small class="helper">每周双休/单休会自动套用常见休息日；轮班制可用上六休一、上十四休一，并通过休息记录自动推算下一次休假。</small>
+              <div class="workweek-grid custom-workweek-grid">
+                ${weekdayOrder(settings.weekStart).map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), `周${weekLabelByIndex(weekday)}上班`, settings.workweek.includes(weekday))).join("")}
               </div>
               ${renderHolidayRuleCard()}
               <h3>放假提醒</h3>
@@ -1482,7 +1563,7 @@ function renderSettingsView() {
                 <span>保存工时时自动添加日补扣</span>
               </label>
               <div class="form-grid">
-                ${numberField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount, 0.01)}
+                ${moneyField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount)}
                 ${field("补扣类型", `<select name="autoAdjustment.type">${option("allowance", "补贴", settings.autoAdjustment.type)}${option("deduction", "扣款", settings.autoAdjustment.type)}</select>`)}
                 ${field("补扣分类", `<input name="autoAdjustment.category" type="text" maxlength="30" value="${escapeAttr(settings.autoAdjustment.category)}">`)}
                 ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
@@ -1501,13 +1582,13 @@ function renderSettingsView() {
                 <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
               </div>
               <div class="form-grid">
-                ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
-                ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
+                ${moneyField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly)}
+                ${moneyField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly)}
                 ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
-                ${numberFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01, {}, "tax-other-fixed")}
+                ${moneyFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, "tax-other-fixed")}
                 ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
                 ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
-                ${numberFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01, {}, "tax-social-fixed")}
+                ${moneyFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, "tax-social-fixed")}
                 ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
               </div>
             </div>
@@ -1515,10 +1596,27 @@ function renderSettingsView() {
 
           <details class="settings-group">
             <summary class="settings-group-title">
-              <span>数据管理</span>
-              <small>备份与导入</small>
+              <span>显示</span>
+              <small>${themeModeLabel(settings.themeMode)}</small>
             </summary>
             <div class="settings-group-body">
+              ${field("明暗模式", `
+                <select name="themeMode">
+                  ${option("system", "跟随系统", settings.themeMode)}
+                  ${option("light", "浅色", settings.themeMode)}
+                  ${option("dark", "深色", settings.themeMode)}
+                </select>
+              `)}
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>数据管理</span>
+              <small>${state.cloud?.lastSyncAt ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}` : "本地备份与云同步"}</small>
+            </summary>
+            <div class="settings-group-body">
+              ${renderCloudSyncPanel()}
               <div class="form-footer">
                 <label class="file-button">
                   导入
@@ -1537,36 +1635,56 @@ function renderSettingsView() {
   `;
 }
 
+function renderCloudSyncPanel() {
+  const cloud = state.cloud || {};
+  return `
+    <div class="cloud-sync-card">
+      <div class="cloud-sync-head">
+        <div>
+          <span>云备份</span>
+          <strong>${cloud.userId ? `账号 ${escapeHtml(cloud.userId)}` : "未登录"}</strong>
+        </div>
+        <small>${cloud.remoteUpdatedAt ? `云端更新 ${formatDateTime(cloud.remoteUpdatedAt)}` : "可在多台设备之间恢复数据"}</small>
+      </div>
+      <div class="form-grid">
+        ${field("云备份账号", `<input name="cloud.userId" type="text" value="${escapeAttr(cloud.userId || "")}" autocomplete="username" placeholder="3-64 位字母、数字、下划线或短横线">`)}
+        ${field("密码", `<input name="cloud.password" type="password" autocomplete="current-password" placeholder="仅本次操作使用，不会保存到本机">`)}
+        <label class="field cloud-hint"><span>说明</span><small>登录后可以把本机记录备份到云端，也可以在新设备上恢复。恢复前请确认账号无误。</small></label>
+      </div>
+      <div class="button-row cloud-actions">
+        <button class="plain-button" type="button" data-action="cloud-login">登录</button>
+        <button class="plain-button" type="button" data-action="cloud-register">创建并备份</button>
+        <button class="primary-button" type="button" data-action="cloud-push">备份本机</button>
+        <button class="danger-button" type="button" data-action="cloud-pull">恢复到本机</button>
+      </div>
+      <small class="helper">恢复会用云端备份覆盖本机工时、设置和补扣记录。</small>
+    </div>
+  `;
+}
+
 function renderHolidayRuleCard() {
   const sample = getHolidayInfo(`${ui.year}-01-01`) || getHolidayInfo("2026-01-01");
+  const hasSchedule = !!getHolidayInfo(`${ui.year}-01-01`);
   return `
     <div class="holiday-card">
       <div>
         <span>节假日识别</span>
-        <strong>${sample ? "已接入国务院 2026 调休表" : "按每周工作日判断"}</strong>
+        <strong>${hasSchedule ? `已接入 ${ui.year} 年调休表` : (sample ? "已接入 2026/2027 调休表" : "按每周工作日判断")}</strong>
       </div>
-      <p>${sample ? "法定节假日、休息日和调休上班会覆盖上方每周工作日设置；批量生成也会自动跳过放假日期。" : "当前年份未内置国务院放假表，会使用上方勾选的每周工作日。"}</p>
+      <p>${hasSchedule ? "法定节假日、休息日和调休上班会覆盖上方每周工作日设置；批量生成也会自动跳过放假日期。" : (sample ? `${ui.year} 年暂未内置调休表，会使用上方勾选的每周工作日。已有 2026/2027 年数据。` : "当前年份未内置国务院放假表，会使用上方勾选的每周工作日。")}</p>
     </div>
   `;
 }
 
 function renderRestCycleSettings(settings) {
-  const reminder = calculateRestReminder(today, settings);
+  const reminder = calculateRestReminder(today, settings, state.entries);
   return `
     <div class="rest-cycle-card">
       <div>
         <span>${escapeHtml(reminder.label)}</span>
-        <strong>${escapeHtml(reminder.detail)}</strong>
+        <strong>${escapeHtml(reminder.detail)}${reminder.anchorDate ? ` · 起点 ${escapeHtml(reminder.anchorDate)}` : ""}</strong>
       </div>
       <div class="form-grid">
-        ${field("放假形式", `
-          <select name="restCycle.mode">
-            ${option(REST_CYCLE_MODES.WORKWEEK, "按每周休息日", settings.restCycle.mode)}
-            ${option(REST_CYCLE_MODES.WORK_6_REST_1, "上六休一", settings.restCycle.mode)}
-            ${option(REST_CYCLE_MODES.WORK_14_REST_1, "上十四休一", settings.restCycle.mode)}
-            ${option(REST_CYCLE_MODES.CUSTOM, "自定义", settings.restCycle.mode)}
-          </select>
-        `)}
         ${fieldWithClass("上一次休息", `<input name="restCycle.lastRestDate" type="date" value="${escapeAttr(settings.restCycle.lastRestDate || "")}">`, "rest-anchor-field")}
         ${numberFieldWithClass("连续上班天数", "restCycle.workDays", settings.restCycle.workDays, 1, { min: 1, max: 31 }, "rest-custom-field")}
         ${numberFieldWithClass("连续休息天数", "restCycle.restDays", settings.restCycle.restDays, 1, { min: 1, max: 14 }, "rest-custom-field")}
@@ -1728,10 +1846,16 @@ function saveAdjustment(form) {
 function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form));
   const next = mergeSettings(state.settings);
+  const nextCloud = { ...(state.cloud || {}) };
   next.workweek = [];
   next.shiftPresets = [];
   next.autoAdjustment.enabled = false;
   for (const [key, value] of Object.entries(data)) {
+    if (key.startsWith("cloud.")) {
+      const fieldName = key.split(".")[1];
+      if (fieldName !== "password") nextCloud[fieldName] = value;
+      continue;
+    }
     if (key.startsWith("workweek.")) {
       next.workweek.push(Number(value));
       continue;
@@ -1748,7 +1872,19 @@ function saveSettings(form) {
     }
     setDeep(next, key, value === "" ? 0 : Number.isNaN(Number(value)) ? value : Number(value));
   }
+  if (next.restCycle.mode === REST_CYCLE_MODES.DOUBLE_WEEKEND) {
+    next.workweek = [1, 2, 3, 4, 5];
+    next.restCycle.workDays = 5;
+    next.restCycle.restDays = 2;
+  }
+  if (next.restCycle.mode === REST_CYCLE_MODES.SINGLE_SUNDAY) {
+    next.workweek = [1, 2, 3, 4, 5, 6];
+    next.restCycle.workDays = 6;
+    next.restCycle.restDays = 1;
+  }
+  if (!next.workweek.length) next.workweek = DEFAULT_SETTINGS.workweek;
   state.settings = limitSettings(next);
+  state.cloud = normalizeCloudConfig(nextCloud);
   persist("已保存设置");
   render();
 }
@@ -1776,6 +1912,173 @@ function saveSetupWizard(form) {
   state.settings = limitSettings(settings);
   persist("设置完成，开始记录工时吧");
   render();
+}
+
+async function handleCloudAction(action) {
+  const auth = cloudConfigFromForm();
+  if (!auth.userId || !auth.password) {
+    persist("请填写云备份账号和密码");
+    render();
+    return;
+  }
+  if (!/^[a-zA-Z0-9_-]{3,64}$/.test(auth.userId)) {
+    persist("用户 ID 仅支持 3-64 位字母、数字、下划线或短横线");
+    render();
+    return;
+  }
+  if (auth.password.length < 6) {
+    persist("密码至少 6 位");
+    render();
+    return;
+  }
+  if (action === "cloud-pull" && !window.confirm("确认用云端备份覆盖本机数据吗？")) {
+    return;
+  }
+
+  const actionName = action.replace("cloud-", "");
+  const payload = {
+    action: actionName,
+    userId: auth.userId
+  };
+  if (actionName === "register" || actionName === "push") {
+    payload.data = createCloudSnapshot();
+    payload.knownUpdatedAt = state.cloud?.remoteUpdatedAt || "";
+  }
+
+  try {
+    const encryptedPassword = await encryptCloudPassword(auth.password);
+    payload.passwordCipher = encryptedPassword.ciphertext;
+    payload.passwordKeyId = encryptedPassword.keyId;
+    const result = await postCloud(payload);
+    if (!result.ok) throw new Error(result.error || "云同步失败");
+    state.cloud = normalizeCloudConfig({
+      ...state.cloud,
+      userId: auth.userId,
+      lastSyncAt: new Date().toISOString(),
+      remoteUpdatedAt: result.updatedAt || result.record?.updatedAt || state.cloud?.remoteUpdatedAt || ""
+    });
+    if (actionName === "pull" && result.data) {
+      applyCloudSnapshot(result.data, state.cloud);
+      persist("已从云端恢复本机数据");
+    } else {
+      saveState(state);
+      persist(cloudActionNotice(actionName));
+    }
+  } catch (error) {
+    persist(error.message || "云同步失败，请稍后再试");
+  }
+  render();
+}
+
+function cloudConfigFromForm() {
+  const form = document.querySelector("#settings-form");
+  const data = form ? Object.fromEntries(new FormData(form)) : {};
+  const cloud = normalizeCloudConfig({
+    ...(state.cloud || {}),
+    userId: data["cloud.userId"] || state.cloud?.userId
+  });
+  state.cloud = cloud;
+  saveState(state);
+  return {
+    ...cloud,
+    password: String(data["cloud.password"] || "")
+  };
+}
+
+function normalizeCloudConfig(cloud = {}) {
+  return {
+    userId: String(cloud.userId || "").trim(),
+    lastSyncAt: cloud.lastSyncAt || "",
+    remoteUpdatedAt: cloud.remoteUpdatedAt || ""
+  };
+}
+
+async function encryptCloudPassword(password) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("当前浏览器不支持安全云备份，请换用新版浏览器。");
+  }
+  const keyResponse = await fetch(`${CLOUD_API_BASE}/key`, { method: "GET", cache: "no-store" });
+  const keyInfo = await keyResponse.json().catch(() => ({}));
+  if (!keyResponse.ok || !keyInfo.publicKey) {
+    throw new Error(keyInfo.error || "云备份暂未配置安全密钥。");
+  }
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    keyInfo.publicKey,
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["encrypt"]
+  );
+  const encrypted = await crypto.subtle.encrypt(
+    { name: "RSA-OAEP" },
+    publicKey,
+    new TextEncoder().encode(password)
+  );
+  return {
+    ciphertext: base64UrlBytes(new Uint8Array(encrypted)),
+    keyId: keyInfo.keyId || ""
+  };
+}
+
+async function postCloud(payload) {
+  const response = await fetch(CLOUD_API_BASE, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  return response.ok ? { ok: true, ...result } : { ok: false, ...result };
+}
+
+function createCloudSnapshot() {
+  return {
+    app: "worktimeapp",
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    settings: mergeSettings(state.settings || {}),
+    entries: state.entries || [],
+    adjustments: state.adjustments || [],
+    activeView: state.activeView || "calendar",
+    backup: state.backup || {}
+  };
+}
+
+function applyCloudSnapshot(data, cloud) {
+  state = {
+    ...state,
+    settings: limitSettings(mergeSettings(data.settings || {})),
+    entries: Array.isArray(data.entries) ? data.entries : [],
+    adjustments: Array.isArray(data.adjustments) ? data.adjustments : [],
+    activeView: data.activeView || state.activeView || "calendar",
+    backup: { ...(state.backup || {}), ...(data.backup || {}) },
+    cloud
+  };
+  ui.view = state.activeView || "calendar";
+  saveState(state);
+}
+
+function cloudActionNotice(actionName) {
+  return ({
+    login: "云备份账号已登录",
+    register: "已创建账号并备份本机数据",
+    push: "已备份本机数据"
+  })[actionName] || "云同步完成";
+}
+
+function updateSetupPreview() {
+  const form = document.querySelector("#setup-form");
+  const output = document.querySelector("#setup-time-preview");
+  if (!form || !output) return;
+  const data = Object.fromEntries(new FormData(form));
+  const breakMinutes = Number(data.breakMinutes || 0);
+  const totalHours = calculateTimeHours(data.startTime, data.endTime, breakMinutes);
+  const regularHours = Math.min(totalHours, DEFAULT_SETTINGS.normalHoursPerDay);
+  const overtimeHours = Math.max(0, round2(totalHours - regularHours));
+  output.innerHTML = `
+    <span>预计每天</span>
+    <strong>${round2(totalHours)}h</strong>
+    <small>正班 ${round2(regularHours)}h · 加班 ${round2(overtimeHours)}h · 午休 ${Math.max(0, breakMinutes)} 分钟</small>
+  `;
 }
 
 function updateEntryPreview() {
@@ -2431,6 +2734,11 @@ function presetsHaveSameTime(presets = []) {
 
 function limitSettings(settings) {
   const next = mergeSettings(settings);
+  next.themeMode = ["system", "light", "dark"].includes(next.themeMode) ? next.themeMode : "system";
+  next.weekStart = boundedNumber(next.weekStart, 0, 6);
+  next.weekStart = Math.round(next.weekStart);
+  next.workweek = [...new Set((next.workweek || []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b);
+  if (!next.workweek.length) next.workweek = DEFAULT_SETTINGS.workweek;
   next.normalHoursPerDay = boundedNumber(next.normalHoursPerDay, 0, WORK_LIMITS.maxRegularHours);
   next.standardMonthlyHours = boundedNumber(next.standardMonthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
   next.comprehensiveTargetHours = boundedNumber(next.comprehensiveTargetHours, 0, WORK_LIMITS.maxMonthlyHours);
@@ -2512,10 +2820,20 @@ function numberField(label, name, value, step, options = {}) {
   return field(label, `<input name="${escapeAttr(name)}" type="number" min="${escapeAttr(min)}"${max} step="${step}" value="${escapeAttr(value)}">`);
 }
 
+function moneyField(label, name, value, options = {}) {
+  const required = options.required ? " required" : "";
+  return field(label, `<input name="${escapeAttr(name)}" type="number" step="any" value="${escapeAttr(value)}" inputmode="decimal" enterkeyhint="done"${required}>`);
+}
+
 function numberFieldWithClass(label, name, value, step, options = {}, className = "") {
   const min = options.min ?? 0;
   const max = options.max === undefined ? "" : ` max="${escapeAttr(options.max)}"`;
   return fieldWithClass(label, `<input name="${escapeAttr(name)}" type="number" min="${escapeAttr(min)}"${max} step="${step}" value="${escapeAttr(value)}">`, className);
+}
+
+function moneyFieldWithClass(label, name, value, className = "", options = {}) {
+  const required = options.required ? " required" : "";
+  return fieldWithClass(label, `<input name="${escapeAttr(name)}" type="number" step="any" value="${escapeAttr(value)}" inputmode="decimal" enterkeyhint="done"${required}>`, className);
 }
 
 function radio(name, value, label, current) {
@@ -2568,7 +2886,54 @@ function dayDecisionText(date, dayType, holiday) {
 }
 
 function weekLabelByIndex(index) {
-  return ({ 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 0: "日" })[Number(index)] || "";
+  return WEEKDAY_NAMES[Number(index)] || "";
+}
+
+function weekdayOrder(start = 1) {
+  const first = Number.isInteger(Number(start)) ? Number(start) : 1;
+  return Array.from({ length: 7 }, (_, index) => (first + index) % 7);
+}
+
+function weekStartDate(date, weekStart = 1) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const offset = ((parsed.getDay() - Number(weekStart || 1)) % 7 + 7) % 7;
+  parsed.setDate(parsed.getDate() - offset);
+  return formatDate(parsed);
+}
+
+function restCycleLabel(mode) {
+  return ({
+    [REST_CYCLE_MODES.DOUBLE_WEEKEND]: "每周双休",
+    [REST_CYCLE_MODES.SINGLE_SUNDAY]: "每周单休",
+    [REST_CYCLE_MODES.WORKWEEK]: "自定义周休",
+    [REST_CYCLE_MODES.WORK_6_REST_1]: "上六休一",
+    [REST_CYCLE_MODES.WORK_14_REST_1]: "上十四休一",
+    [REST_CYCLE_MODES.CUSTOM]: "自定义周期"
+  })[mode] || "自定义周休";
+}
+
+function applyTheme() {
+  const mode = ["system", "light", "dark"].includes(state.settings?.themeMode)
+    ? state.settings.themeMode
+    : "system";
+  if (mode === "system") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.dataset.theme = mode;
+  }
+  const prefersDark = globalThis.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+  const effective = mode === "system" ? (prefersDark ? "dark" : "light") : mode;
+  document.documentElement.style.colorScheme = effective;
+  document.querySelector("meta[name='theme-color']")?.setAttribute("content", effective === "dark" ? "#171b20" : "#176b5b");
+}
+
+function themeModeLabel(mode) {
+  return ({
+    system: "跟随系统",
+    light: "浅色",
+    dark: "深色"
+  })[mode] || "跟随系统";
 }
 
 function money(value) {
@@ -2580,6 +2945,12 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function base64UrlBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
 function setDeep(target, path, value) {

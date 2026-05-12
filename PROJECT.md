@@ -1,7 +1,7 @@
 # 明薪工时项目说明
 
-更新时间：2026-05-12 19:00 CST
-当前版本：v0.2.0
+更新时间：2026-05-13 00:55 CST
+当前版本：v0.2.5
 
 ## 项目定位
 
@@ -15,18 +15,26 @@
 - 数据存储：浏览器 `localStorage`，支持 JSON 备份导入导出。
 - 远端仓库：`https://github.com/yuan-666/WorkTimeAPP.git`
 - Git 用户邮箱：`2991077067@qq.com`
-- 最新功能发布提交：待提交
-- 最新发布：`https://github.com/yuan-666/WorkTimeAPP/releases/tag/v0.1.6`
+- 最新功能发布提交：`v0.2.5` 发布提交
+- 最新发布说明：`RELEASE_NOTES.md`（Git 标签与 GitHub Release：`v0.2.5`）
 - 本地预览：`npm run serve` 后打开 `http://127.0.0.1:4173/index.html`
+- 静态构建：`npm run build`，输出目录为 `dist/`
+- ESA 函数入口：`functions/index.js`，单个 `fetch` 入口分发云备份与管理员后台请求；用户界面不展示接口配置。
+- 云端 KV：`worktimeapp`，用户记录键为 `user:{userId}`；管理员配置键为 `admin_name`、`admin_passwd`；RSA-OAEP 私钥 JWK 键为 `RSA_key`。
 
 ## 主要文件
 
 - `index.html`：PWA 入口。
+- `admin.html`：独立管理员后台，需要管理员账号密码登录。
+- `changelog.html`：独立时间轴更新日志页面，可直接访问。
+- `assets/social-icons.svg`：从 myblog 图标资产提取的 GitHub 和博客外链图标。
 - `styles.css`：响应式界面、表单、日历、记录、报表、设置页样式。
 - `src/app.js`：页面渲染、交互事件、表单保存、批量操作、设置保存。
 - `src/calculations.js`：工时、薪资、个税、节假日、休息周期等核心计算。
 - `src/storage.js`：本地存储、备份、导入导出。
 - `src/export.js`：CSV、Excel、分享摘要。
+- `functions/index.js`：阿里云 ESA 单入口函数，提供云备份和管理员后台 API。
+- `scripts/build.mjs`：静态构建脚本，把 PWA 文件复制到 `dist/`。
 - `sw.js`：Service Worker 离线缓存。
 - `tests/calculations.test.js`：核心计算测试。
 - `README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`：用户说明、版本历史和发布说明。
@@ -35,21 +43,28 @@
 
 ## 核心能力
 
-- 月历视图按周一开周，展示工时、工资、节假日、休息日、调休上班。
+- 月历视图支持用户自定义每周开始日，展示工时、工资、节假日、休息日、调休上班。
 - 每日登记支持正常上班、有加班、休息、请假。
 - 工作日默认有班，自动套用白班/夜班等班次。
+- 首次使用向导会实时显示默认上下班时间对应的每日总工时、正班和加班。
 - 时间记录会自动拆分正班和加班；下班时间支持准点、加 1/2/3 小时快捷调整。
 - 请假支持年假、事假、病假、调休、带薪、不计薪、扣工资、按倍数计薪、全天/半天/2 小时/自定义时长。
 - 批量处理拆成批量添加和批量删除两个模式，删除前必须确认并显示影响。
 - 薪资模式支持正班+加班、底薪+加班、综合工时制、小时计算。
 - 默认加班倍率是工作日 1.5 倍、休息日 2 倍、法定节假日 3 倍，但允许按实际工资规则调整。
 - 内置 2026 年国务院节假日和调休安排。
-- 支持上六休一、上十四休一、自定义周期等非周末休息提醒。
+- 支持每周双休、每周单休、自定义周休、上六休一、上十四休一、自定义周期等休息提醒。
+- 轮班制放假提醒可从上一次休息日或历史休息记录推算下一次休假。
 - 个税按居民工资薪金累计预扣法估算，扣除项支持固定金额或工资比例。
 - 报表页新增薪资构成饼图和周工时趋势图。
 - 记录页支持关键词搜索和日期范围筛选。
 - 日历视图每周底部显示工时和工资小计。
-- 自动跟随系统深色模式偏好。
+- 支持跟随系统、浅色、深色三种主题模式；深色模式使用统一主题变量，避免白底输入框和低对比文字。
+- 数据管理支持阿里云 ESA + KV 云备份；用户侧隐藏接口配置，只显示账号、密码、备份和恢复。
+- 云备份密码在浏览器端使用 RSA-OAEP 公钥加密，服务端用 `RSA_key` 私钥解密后只保存 PBKDF2-SHA256 加盐哈希。
+- 独立后台 `admin.html` 支持用户总数、启用用户、同步/登录次数、IP 网段分布、使用事件、近 30 日使用趋势，以及管理员改密、停用/启用和备注。
+- 后台登录使用 `admin_name`、`admin_passwd`，成功后发放服务端签名短期会话；后台看板不返回用户工时明细。
+- 侧边栏底部新增动态更新日志入口、`© yuan 版权所有`、GitHub 仓库图标和 yuan6.cn 博客友情链接图标；仍保留 `changelog.html` 独立页面。
 
 ## 开发规范
 
@@ -71,8 +86,11 @@
 npm test
 node --check src/app.js
 node --check src/calculations.js
+node --check src/storage.js
 node --check src/export.js
+node --check functions/index.js
 node --check sw.js
+npm run build
 git diff --check
 ```
 
@@ -85,7 +103,7 @@ curl -I http://127.0.0.1:4173/index.html
 
 ## 最近交接重点
 
-- `v0.2.0` 新增数据可视化（饼图+趋势图）、记录搜索筛选、日历周小计、深色模式。
-- 本地 `main` 应保持与 `origin/main` 对齐；交接前用 `git status --short --branch` 复核。
+- `v0.2.5` 是当前发布版本，包含日常登记可用性、排班休息提醒、明暗主题、独立后台、安全云备份、更新日志和 ESA Pages 构建输出。
+- 发布前后需要保持本地 `main` 与 `origin/main` 对齐；交接前用 `git status --short --branch` 复核。
 - 本地预览服务可能仍在 4173 端口运行。
-- 后续优先优化方向：2027 年节假日支持、更多端到端交互验证、数据导出 PDF。
+- 后续优先优化方向：2027 年节假日正式通知复核、ESA 真实环境联调、更多端到端交互验证、数据导出 PDF。

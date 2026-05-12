@@ -18,6 +18,95 @@
 - 后续建议：
 ```
 
+## 2026-05-13 00:55 CST - v0.2.5 GitHub 发布整理
+
+- 触发原因：用户要求把当前改动推送到 GitHub，写好版本描述文件、README、提交日志，并发布新的版本。
+- 修改文件：`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - `RELEASE_NOTES.md` 从小补丁说明改为完整 v0.2.5 发布说明，覆盖日常登记、批量操作、排班休息、工资个税、云同步、独立后台、安全加密、侧边栏底部和部署路径。
+  - `PROJECT.md` 将当前发布状态从“待提交/待发布”改为 `v0.2.5` 发布口径，并补充该版本的整体发布范围。
+  - 本条记录用于说明本轮 GitHub push、tag 和 release 前的文档整理。
+- 验证结果：`npm test` 34 项通过；`npm run build` 成功输出 `dist/`；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`admin.html` 内联脚本解析通过；`git diff --check` 通过。
+- 风险/注意：GitHub Release 应使用 `v0.2.5` 标签，并以 `RELEASE_NOTES.md` 作为发布描述来源。
+- 后续建议：发布完成后用远端仓库页面核对 README、Release Notes 和 tag 是否正常展示。
+
+## 2026-05-13 00:25 CST - v0.2.5 侧边栏底部、RSA_key 与构建输出
+
+- 触发原因：用户澄清版权、日志、GitHub、博客友情链接都要放在侧边栏底部并可分两行展示，其他底部提示不需要；要求把私钥 KV 名改为 `RSA_key`，提供生成自己管理员密码的方法，并说明 ESA Pages/函数部署方式、构建命令、输出目录和函数入口。
+- 修改文件：`src/app.js`、`styles.css`、`functions/index.js`、`scripts/build.mjs`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 版权、动态日志、GitHub、yuan6.cn 博客友情链接统一移动到侧边栏底部，两行展示；移除主内容区页脚和原侧边栏提示。
+  - RSA 私钥 KV 键名从旧名改为 `RSA_key`；`README.md`、`PROJECT.md`、`CHANGELOG.md` 同步改名。
+  - 新增 `scripts/build.mjs` 和 `npm run build`，构建输出目录为 `dist/`。
+  - `README.md` 补充 ESA Pages 设置：构建命令 `npm run build`，输出目录 `dist`，函数入口文件 `functions/index.js`，入口对象为默认导出的 `fetch(request, env)`。
+  - `README.md` 保留 `RSA_key` 生成命令，并提供交互式 `admin_passwd` PBKDF2 哈希生成命令，用户可输入自己的管理员密码生成 KV 值。
+  - `sw.js` 缓存名更新到 `worktimeapp-v17`。
+- 验证结果：`npm test` 34 项通过；`npm run build` 成功输出 `dist/`；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/build.mjs` 均通过；`admin.html` 内联脚本解析通过；Node REPL 内存 KV 冒烟测试通过 `RSA_key` 公钥获取、用户加密注册/恢复、管理员加密登录和看板读取；`git diff --check` 通过。
+- 风险/注意：部署到 ESA 后，静态 Pages 与函数路由需要在同一域名或同一站点路由下，否则前端访问 `/api/cloud/key`、`/api/cloud`、`/api/admin/login` 会跨域或 404。
+- 后续建议：部署前先在 KV 写入 `RSA_key`、`admin_name`、`admin_passwd`；部署后用 HTTPS 域名验证云备份注册/登录和 `admin.html` 管理员登录。
+
+## 2026-05-12 23:58 CST - v0.2.4 底部日志与版权外链
+
+- 触发原因：用户要求把日志缩小到底部，底部标记 yuan 版权所有，增加 GitHub 和博客友情链接图标，并参考个人作品集底部访问统计风格做动态日志入口；同时要求说明密码加密方式。
+- 修改文件：`src/app.js`、`styles.css`、`admin.html`、`assets/social-icons.svg`、`sw.js`、`package.json`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 主应用移除“日志”主导航和移动底部导航项，保留月历、记录、报表、设置四个高频入口。
+  - 页面底部新增动态日志链接，显示当前版本 `v0.2.4` 和更新次数，交互参考 portfolio 底部访问统计入口。
+  - 底部新增 `© yuan 版权所有`、GitHub 仓库图标和 yuan6.cn 博客友情链接图标。
+  - 新增 `assets/social-icons.svg`，从 myblog 的 `icons.svg` 提取 GitHub 和文档/博客图标并改为 `currentColor`，以适配明暗主题。
+  - `admin.html` 登录页和后台侧栏补齐版权与外链图标。
+  - `README.md` 新增 `RSA_key` 和 `admin_passwd` 本地生成命令，说明密码传输加密与服务端哈希保存方式。
+  - `sw.js` 缓存名更新到 `worktimeapp-v16`，并缓存 `assets/social-icons.svg`。
+- 验证结果：`npm test` 34 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`admin.html` 内联脚本解析通过；`git diff --check` 通过；`curl -I http://127.0.0.1:4174/index.html`、`/admin.html`、`/changelog.html`、`/assets/social-icons.svg` 均返回 200。
+- 风险/注意：底部图标使用外部 SVG symbol 文件，PWA 离线缓存必须包含 `assets/social-icons.svg`，否则离线时图标会缺失。
+- 后续建议：实际浏览器检查底部动态日志入口、图标颜色、移动端底部导航和深色模式。
+
+## 2026-05-12 23:38 CST - v0.2.3 独立后台与安全云备份
+
+- 触发原因：用户要求把管理员部分全部移到独立后台页面，必须管理员登录才能使用；普通用户界面不展示接口信息；用户密码使用非对称加密，私钥放在 KV `RSA_key`；同时更新界面文案并把更新日志作为侧边栏选项显示在右侧。
+- 修改文件：`src/app.js`、`src/storage.js`、`styles.css`、`functions/index.js`、`admin.html`、`changelog.html`、`sw.js`、`package.json`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 主应用移除后台入口、管理员令牌表单和云同步接口输入，用户侧只显示云备份账号、密码、备份和恢复。
+  - 新增独立 `admin.html`，管理员账号密码登录后查看用户看板，支持刷新、退出、改密、停用/启用和备注。
+  - `functions/index.js` 改为使用 KV `admin_name`、`admin_passwd`、`RSA_key`；管理员登录发放服务端签名短期会话。
+  - 用户云备份登录、注册、备份、恢复，以及管理员改密/登录，都会先获取公钥并使用 RSA-OAEP 加密密码；服务端解密后只保存或校验 PBKDF2-SHA256 加盐哈希。
+  - 主应用新增“日志”导航，右侧展示时间轴更新日志；`changelog.html` 保留独立访问并新增 v0.2.3。
+  - `sw.js` 缓存名更新到 `worktimeapp-v15`，并加入 `admin.html`。
+- 验证结果：`npm test` 34 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`admin.html` 内联脚本解析通过；Node REPL 内存 KV 冒烟测试通过公钥获取、用户加密注册/恢复、管理员加密登录和看板读取；`git diff --check` 通过；`curl -I http://127.0.0.1:4174/index.html`、`/admin.html`、`/changelog.html` 均返回 200。
+- 风险/注意：ESA 真实环境还需要写入 `RSA_key` RSA-OAEP-256 私钥 JWK、`admin_name` 和 `admin_passwd` 后联调；如果 `admin_passwd` 使用明文字符串可工作，但上线更建议改为 PBKDF2 记录。
+- 后续建议：部署到 ESA 后用 HTTPS 域名实际验证 `/api/cloud/key`、用户注册/登录/备份/恢复、`admin.html` 登录和管理员改密；再用移动端检查主应用“日志”和深色模式。
+
+## 2026-05-12 21:18 CST - v0.2.2 输入、主题与时间轴更新日志
+
+- 触发原因：用户反馈金额输入不应被固定步长限制、引导页看不到默认班次每日工时、深色模式白底输入框和低对比文字难用，并希望整体风格参考 `me.yuan6.cn`/portfolio 经历部分，新增可访问的时间轴更新日志页和明暗切换能力。
+- 修改文件：`src/app.js`、`src/calculations.js`、`styles.css`、`changelog.html`、`sw.js`、`package.json`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 金额类输入新增 `moneyField` / `moneyFieldWithClass`，工资、时薪、补扣、个税金额等字段使用 `step=any` 且不再加 `min=0`，允许用户按实际情况填写任意数字。
+  - 首次使用向导新增 `setup-time-preview`，根据上班、下班、午休实时显示每天总工时、正班和加班。
+  - 设置新增 `themeMode`，支持 `system`、`light`、`dark`；主界面顶部可一键循环切换，设置页可保存偏好。
+  - 深色模式改为主题变量体系，统一表单、日历、记录、设置、后台看板、底部导航、提示和预览模块的背景与文字对比。
+  - 新增 `changelog.html`，采用左侧说明 + 右侧线性版本时间轴，风格参考 portfolio 的经历区，支持单独访问和自身明暗切换。
+  - `sw.js` 缓存名更新到 `worktimeapp-v14`，并将 `changelog.html` 加入离线缓存。
+- 验证结果：`npm test` 34 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`git diff --check` 通过；`curl -I http://127.0.0.1:4174/index.html` 和 `/changelog.html` 均返回 200。
+- 风险/注意：金额输入允许任意数字后，计算层仍会按工资估算口径处理负值/异常值；如果用户需要负工资或负补扣参与计算，后续需单独定义业务含义。
+- 后续建议：用浏览器实际检查浅色、深色、跟随系统三种主题下的日历、记录、设置、后台和 `changelog.html`。
+
+## 2026-05-12 20:43 CST - v0.2.1 自定义排班、云同步与后台
+
+- 触发原因：用户要求接手 `/Users/yuanhuang/code/worktimeapp`，继续迭代休假方式、自定义周起始日，并为阿里云 ESA Pages/函数 + `worktimeapp` KV 增加云备份和管理员后台。
+- 修改文件：`src/calculations.js`、`src/app.js`、`src/storage.js`、`styles.css`、`functions/index.js`、`tests/calculations.test.js`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 用户可选择每周从周几开始；月历表头、日历补位、周合计和周工时趋势同步使用该设置。
+  - 休假方式新增每周双休、每周单休、自定义周休、上六休一、上十四休一和自定义连续周期。
+  - 放假提醒支持从手填的上一次休息日或历史 `rest-day` 记录推算下一次休假。
+  - 设置页数据管理新增云同步表单，支持注册、登录、上传本机、拉取覆盖本机。
+  - 新增 ESA 单函数入口 `functions/index.js`，同一入口分发 `/api/cloud` 与 `/api/admin`，使用 `worktimeapp` KV。
+  - 云端用户记录保存 PBKDF2-SHA256 加盐密码哈希、设置、工时、补扣和备份快照，不保存明文密码。
+  - 新增后台页，可查看用户总数、启用用户、同步/登录次数、IP 网段分布、使用事件和近 30 日使用趋势；支持改密、停用/启用、备注。
+- 验证结果：`npm test` 34 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`functions/index.js`、`sw.js` 均通过。
+- 风险/注意：后台真实可用性还需要在阿里云 ESA 绑定 `worktimeapp` KV 并写入 `admin_token` 后联调；2027 年节假日当前是预估表，国务院正式通知发布后需更新。
+- 后续建议：优先做 ESA 真实环境 curl 验证、后台权限细化、云同步冲突合并和端到端加密备份。
+
 ## 2026-05-12 19:00 CST - v0.2.0 数据可视化与深色模式
 
 - 触发原因：用户要求继续优化 PROJECT.md 后续方向——数据可视化图表和移动端体验。

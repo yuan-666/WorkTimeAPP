@@ -9,6 +9,11 @@ export const initialState = {
   activeView: "calendar",
   backup: {
     lastExportedAt: ""
+  },
+  cloud: {
+    userId: "",
+    lastSyncAt: "",
+    remoteUpdatedAt: ""
   }
 };
 
@@ -28,7 +33,8 @@ export function loadState() {
       settings: mergeSettings(parsed.settings || {}),
       entries: Array.isArray(parsed.entries) ? parsed.entries : [],
       adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],
-      backup: { ...initialState.backup, ...(parsed.backup || {}) }
+      backup: { ...initialState.backup, ...(parsed.backup || {}) },
+      cloud: { ...initialState.cloud, ...(parsed.cloud || {}) }
     };
   } catch {
     return structuredCloneSafe(initialState);
@@ -41,7 +47,12 @@ export function saveState(state) {
     entries: state.entries || [],
     adjustments: state.adjustments || [],
     activeView: state.activeView || "calendar",
-    backup: { ...initialState.backup, ...(state.backup || {}) }
+    backup: { ...initialState.backup, ...(state.backup || {}) },
+    cloud: {
+      userId: String(state.cloud?.userId || ""),
+      lastSyncAt: state.cloud?.lastSyncAt || "",
+      remoteUpdatedAt: state.cloud?.remoteUpdatedAt || ""
+    }
   }));
 }
 
@@ -67,7 +78,8 @@ export function importBackupText(text) {
   return {
     ...initialState,
     ...data,
-    settings: mergeSettings(data.settings || {})
+    settings: mergeSettings(data.settings || {}),
+    cloud: { ...initialState.cloud, ...(data.cloud || {}) }
   };
 }
 

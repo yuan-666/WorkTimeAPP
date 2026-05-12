@@ -12,6 +12,8 @@ export const RECORD_MODES = {
 
 export const REST_CYCLE_MODES = {
   WORKWEEK: "workweek",
+  DOUBLE_WEEKEND: "doubleWeekend",
+  SINGLE_SUNDAY: "singleSunday",
   WORK_6_REST_1: "work6rest1",
   WORK_14_REST_1: "work14rest1",
   CUSTOM: "custom"
@@ -59,6 +61,8 @@ export const DEFAULT_SETTINGS = {
   hourlyRate: 30,
   defaultPresetId: "day",
   workweek: [1, 2, 3, 4, 5],
+  weekStart: 1,
+  themeMode: "system",
   autoDayType: true,
   shiftPresets: [
     {
@@ -121,7 +125,7 @@ export const DEFAULT_SETTINGS = {
     socialSecurityPercent: 0
   },
   restCycle: {
-    mode: REST_CYCLE_MODES.WORKWEEK,
+    mode: REST_CYCLE_MODES.DOUBLE_WEEKEND,
     workDays: 5,
     restDays: 2,
     lastRestDate: ""
@@ -179,6 +183,51 @@ export const HOLIDAY_SCHEDULES = {
       "2026-10-07": { dayType: "restday", name: "国庆假期", marker: "休" },
       "2026-10-10": { dayType: "workday", name: "国庆调休上班", marker: "班", adjusted: true }
     }
+  },
+  2027: {
+    source: "2027年节假日安排（预估，以国务院正式通知为准）",
+    sourceUrl: "",
+    days: {
+      "2027-01-01": { dayType: "holiday", name: "元旦", marker: "法定" },
+      "2027-01-02": { dayType: "restday", name: "元旦假期", marker: "休" },
+      "2027-01-03": { dayType: "restday", name: "元旦假期", marker: "休" },
+
+      "2027-02-04": { dayType: "workday", name: "春节调休上班", marker: "班", adjusted: true },
+      "2027-02-05": { dayType: "holiday", name: "除夕", marker: "法定" },
+      "2027-02-06": { dayType: "holiday", name: "春节", marker: "法定" },
+      "2027-02-07": { dayType: "holiday", name: "春节", marker: "法定" },
+      "2027-02-08": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2027-02-09": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2027-02-10": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2027-02-11": { dayType: "restday", name: "春节假期", marker: "休" },
+      "2027-02-20": { dayType: "workday", name: "春节调休上班", marker: "班", adjusted: true },
+
+      "2027-04-03": { dayType: "restday", name: "清明假期", marker: "休" },
+      "2027-04-04": { dayType: "holiday", name: "清明节", marker: "法定" },
+      "2027-04-05": { dayType: "restday", name: "清明补休", marker: "休" },
+
+      "2027-04-25": { dayType: "workday", name: "劳动节调休上班", marker: "班", adjusted: true },
+      "2027-05-01": { dayType: "holiday", name: "劳动节", marker: "法定" },
+      "2027-05-02": { dayType: "holiday", name: "劳动节", marker: "法定" },
+      "2027-05-03": { dayType: "restday", name: "劳动节假期", marker: "休" },
+      "2027-05-04": { dayType: "restday", name: "劳动节假期", marker: "休" },
+      "2027-05-05": { dayType: "restday", name: "劳动节假期", marker: "休" },
+
+      "2027-06-06": { dayType: "workday", name: "端午调休上班", marker: "班", adjusted: true },
+      "2027-06-18": { dayType: "holiday", name: "端午节", marker: "法定" },
+      "2027-06-19": { dayType: "restday", name: "端午假期", marker: "休" },
+      "2027-06-20": { dayType: "restday", name: "端午假期", marker: "休" },
+
+      "2027-09-26": { dayType: "workday", name: "中秋国庆调休上班", marker: "班", adjusted: true },
+      "2027-10-01": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2027-10-02": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2027-10-03": { dayType: "holiday", name: "国庆节", marker: "法定" },
+      "2027-10-04": { dayType: "holiday", name: "中秋节", marker: "法定" },
+      "2027-10-05": { dayType: "restday", name: "中秋国庆假期", marker: "休" },
+      "2027-10-06": { dayType: "restday", name: "中秋国庆假期", marker: "休" },
+      "2027-10-07": { dayType: "restday", name: "中秋国庆假期", marker: "休" },
+      "2027-10-08": { dayType: "restday", name: "中秋国庆假期", marker: "休" }
+    }
   }
 };
 
@@ -212,12 +261,26 @@ export function mergeSettings(partial = {}) {
     ...DEFAULT_SETTINGS,
     ...partial,
     shiftPresets: normalizeShiftPresets(partial.shiftPresets || DEFAULT_SETTINGS.shiftPresets),
-    workweek: Array.isArray(partial.workweek) ? partial.workweek.map(Number) : DEFAULT_SETTINGS.workweek,
+    workweek: Array.isArray(partial.workweek) ? normalizeWeekdayList(partial.workweek) : DEFAULT_SETTINGS.workweek,
+    weekStart: normalizeWeekday(partial.weekStart, DEFAULT_SETTINGS.weekStart),
     autoAdjustment: { ...DEFAULT_SETTINGS.autoAdjustment, ...(partial.autoAdjustment || {}) },
     goals: { ...DEFAULT_SETTINGS.goals, ...(partial.goals || {}) },
     tax: { ...DEFAULT_SETTINGS.tax, ...(partial.tax || {}) },
     restCycle: { ...DEFAULT_SETTINGS.restCycle, ...(partial.restCycle || {}) }
   };
+}
+
+export function normalizeWeekday(value, fallback = 1) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0 || number > 6) return fallback;
+  return number;
+}
+
+export function normalizeWeekdayList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6))]
+    .sort((a, b) => a - b);
 }
 
 export function round2(value) {
@@ -822,9 +885,10 @@ export function summarizeYear(entries = [], adjustments = [], settings = DEFAULT
   });
 }
 
-export function buildCalendarDays(year, monthIndex) {
+export function buildCalendarDays(year, monthIndex, weekStart = 1) {
   const first = new Date(year, monthIndex, 1);
-  const startDay = (first.getDay() + 6) % 7;
+  const normalizedWeekStart = normalizeWeekday(weekStart, 1);
+  const startDay = positiveModulo(first.getDay() - normalizedWeekStart, 7);
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const previousMonthDays = new Date(year, monthIndex, 0).getDate();
   const cells = [];
@@ -894,14 +958,21 @@ function calculateLeavePay(entry = {}, settings = DEFAULT_SETTINGS, insights = d
   };
 }
 
-export function calculateRestReminder(date, settings = DEFAULT_SETTINGS) {
+export function calculateRestReminder(date, settings = DEFAULT_SETTINGS, entries = []) {
   const merged = mergeSettings(settings);
   const dateText = isValidDateString(String(date || "")) ? String(date) : formatDate(new Date());
   const config = merged.restCycle || DEFAULT_SETTINGS.restCycle;
-  if (config.mode === REST_CYCLE_MODES.WORKWEEK) return workweekRestReminder(dateText, merged);
+  if (config.mode === REST_CYCLE_MODES.WORKWEEK
+    || config.mode === REST_CYCLE_MODES.DOUBLE_WEEKEND
+    || config.mode === REST_CYCLE_MODES.SINGLE_SUNDAY) {
+    return workweekRestReminder(dateText, restSettingsForMode(merged, config.mode), config.mode);
+  }
 
   const cycle = restCycleConfig(config);
-  if (!isValidDateString(config.lastRestDate || "")) {
+  const anchorDate = isValidDateString(config.lastRestDate || "")
+    ? config.lastRestDate
+    : inferLastRestDate(dateText, entries, merged);
+  if (!isValidDateString(anchorDate || "")) {
     return {
       mode: config.mode,
       label: cycle.label,
@@ -909,11 +980,11 @@ export function calculateRestReminder(date, settings = DEFAULT_SETTINGS) {
       isRestDue: false,
       daysUntilRest: null,
       nextRestDate: "",
-      detail: "设置上一次休息日后开始倒计时"
+      detail: "设置上一次休息日，或先记录一次休息，系统就能开始倒计时"
     };
   }
 
-  const days = daysBetween(config.lastRestDate, dateText);
+  const days = daysBetween(anchorDate, dateText);
   if (days === 0) {
     return {
       mode: config.mode,
@@ -922,6 +993,7 @@ export function calculateRestReminder(date, settings = DEFAULT_SETTINGS) {
       isRestDue: true,
       daysUntilRest: 0,
       nextRestDate: dateText,
+      anchorDate,
       detail: "今天就是记录里的休息日"
     };
   }
@@ -938,6 +1010,7 @@ export function calculateRestReminder(date, settings = DEFAULT_SETTINGS) {
     isRestDue,
     daysUntilRest,
     nextRestDate,
+    anchorDate,
     detail: isRestDue ? "今天建议安排休息" : `距离建议休息还有 ${daysUntilRest} 天`
   };
 }
@@ -956,13 +1029,29 @@ function restCycleConfig(config = DEFAULT_SETTINGS.restCycle) {
   };
 }
 
-function workweekRestReminder(date, settings) {
+function restSettingsForMode(settings, mode) {
+  if (mode === REST_CYCLE_MODES.DOUBLE_WEEKEND) {
+    return { ...settings, workweek: [1, 2, 3, 4, 5] };
+  }
+  if (mode === REST_CYCLE_MODES.SINGLE_SUNDAY) {
+    return { ...settings, workweek: [1, 2, 3, 4, 5, 6] };
+  }
+  return settings;
+}
+
+function restModeLabel(mode) {
+  if (mode === REST_CYCLE_MODES.DOUBLE_WEEKEND) return "每周双休";
+  if (mode === REST_CYCLE_MODES.SINGLE_SUNDAY) return "每周单休";
+  return "自定义周休";
+}
+
+function workweekRestReminder(date, settings, mode = REST_CYCLE_MODES.WORKWEEK) {
   for (let offset = 0; offset <= 14; offset += 1) {
     const dateText = addDays(date, offset);
     if (inferDayType(dateText, settings) !== "workday") {
       return {
-        mode: REST_CYCLE_MODES.WORKWEEK,
-        label: "按每周休息日",
+        mode,
+        label: restModeLabel(mode),
         requiresAnchor: false,
         isRestDue: offset === 0,
         daysUntilRest: offset,
@@ -972,14 +1061,26 @@ function workweekRestReminder(date, settings) {
     }
   }
   return {
-    mode: REST_CYCLE_MODES.WORKWEEK,
-    label: "按每周休息日",
+    mode,
+    label: restModeLabel(mode),
     requiresAnchor: false,
     isRestDue: false,
     daysUntilRest: null,
     nextRestDate: "",
     detail: "未来两周没有找到休息日"
   };
+}
+
+function inferLastRestDate(date, entries = [], settings = DEFAULT_SETTINGS) {
+  const restEntries = (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry?.date && entry.date <= date)
+    .filter((entry) => {
+      if (entry.source === "rest-day") return true;
+      if (entry.dayType === "restday" && normalizeEntry(entry, settings).totalHours <= 0) return true;
+      return false;
+    })
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return restEntries[0]?.date || "";
 }
 
 export function getUnloggedDays(year, monthIndex, entries, settings = DEFAULT_SETTINGS) {

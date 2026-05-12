@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#176b5b">
+    <title>更新日志 - 明薪工时</title>
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8fb;
+        --surface: #ffffff;
+        --ink: #16201d;
+        --muted: #697773;
+        --line: #d8e0e7;
+        --accent: #176b5b;
+        --accent-soft: #dcefe9;
+        --shadow: 0 18px 46px rgba(31, 50, 56, 0.1);
+        font-family: "Avenir Next", "SF Pro Display", "Segoe UI", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+      }
+
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #12161a;
+        --surface: #1a1f24;
+        --ink: #edf2f0;
+        --muted: #aeb8b4;
+        --line: #303940;
+        --accent: #55c49a;
+        --accent-soft: #1e342d;
+        --shadow: 0 18px 46px rgba(0, 0, 0, 0.32);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --bg: #12161a;
+          --surface: #1a1f24;
+          --ink: #edf2f0;
+          --muted: #aeb8b4;
+          --line: #303940;
+          --accent: #55c49a;
+          --accent-soft: #1e342d;
+          --shadow: 0 18px 46px rgba(0, 0, 0, 0.32);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          linear-gradient(180deg, rgba(23, 107, 91, 0.08), transparent 360px),
+          var(--bg);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        width: min(1120px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 32px 0 96px;
+      }
+
+      .topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 76px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--ink);
+        font-weight: 800;
+      }
+
+      .brand img {
+        width: 34px;
+        height: 34px;
+      }
+
+      .actions {
+        display: inline-flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .button {
+        min-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--ink);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms ease, background 180ms ease;
+      }
+
+      .button:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .button:active {
+        transform: translateY(1px) scale(0.99);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+        gap: clamp(36px, 8vw, 112px);
+        align-items: start;
+      }
+
+      .intro {
+        position: sticky;
+        top: 32px;
+      }
+
+      .tag {
+        display: inline-flex;
+        margin-bottom: 14px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 8em;
+        font-size: clamp(34px, 6vw, 70px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .intro p {
+        max-width: 28em;
+        margin: 22px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      .timeline {
+        display: grid;
+        border-top: 1px solid var(--line);
+      }
+
+      .item {
+        display: grid;
+        grid-template-columns: 64px 118px minmax(0, 1fr);
+        gap: 22px;
+        align-items: baseline;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--line);
+        transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms ease;
+      }
+
+      .item:hover {
+        border-color: var(--accent);
+        transform: translateX(6px);
+      }
+
+      .index,
+      .version {
+        font-family: "SF Mono", "Cascadia Code", "Menlo", monospace;
+        font-weight: 700;
+      }
+
+      .index {
+        color: var(--accent);
+        font-size: 12px;
+      }
+
+      .version {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .content h2 {
+        margin: 0 0 8px;
+        font-size: 19px;
+        letter-spacing: 0;
+      }
+
+      .date {
+        display: block;
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .content ul {
+        display: grid;
+        gap: 7px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .content li {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .content li::before {
+        content: "";
+        display: inline-block;
+        width: 5px;
+        height: 5px;
+        margin: 0 9px 2px 0;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      @media (max-width: 900px) {
+        .topline {
+          margin-bottom: 48px;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .intro {
+          position: static;
+        }
+
+        h1 {
+          max-width: 100%;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page {
+          width: min(100% - 24px, 1120px);
+          padding-top: 18px;
+        }
+
+        .topline {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .actions {
+          width: 100%;
+          justify-content: stretch;
+        }
+
+        .button {
+          flex: 1;
+        }
+
+        .item {
+          grid-template-columns: 42px minmax(0, 1fr);
+          gap: 8px 16px;
+          padding: 22px 0;
+        }
+
+        .version {
+          grid-column: 1;
+        }
+
+        .content {
+          grid-column: 2;
+          grid-row: 1 / span 2;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="topline">
+        <a class="brand" href="./index.html">
+          <img src="./assets/icon.svg" alt="">
+          <span>明薪工时</span>
+        </a>
+        <div class="actions">
+          <button class="button" type="button" id="theme-toggle">跟随系统</button>
+          <a class="button" href="./index.html">返回应用</a>
+          <a class="button" href="./CHANGELOG.md">Markdown</a>
+        </div>
+      </header>
+
+      <section class="layout">
+        <div class="intro">
+          <span class="tag">Changelog</span>
+          <h1>产品更新轨迹</h1>
+          <p>这里按版本记录真正影响使用体验的变化：登记是否更顺手，工资是否更清楚，备份和同步是否更可靠。</p>
+        </div>
+
+        <div class="timeline" aria-label="版本时间轴">
+          <article class="item">
+            <span class="index">01</span>
+            <span class="version">v0.2.4</span>
+            <div class="content">
+              <h2>底部动态日志与版权外链</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>更新日志从主导航降级为底部动态入口，减少日常记录时的干扰。</li>
+                <li>底部新增 yuan 版权所有、GitHub 仓库和 yuan6.cn 博客友情链接。</li>
+                <li>GitHub 与博客使用从 myblog 图标资产提取的 SVG 图标，并跟随明暗主题。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">02</span>
+            <span class="version">v0.2.3</span>
+            <div class="content">
+              <h2>独立后台与安全云备份</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>管理员能力移到独立后台页面，日常工时应用不再出现后台入口。</li>
+                <li>用户侧云备份隐藏技术配置，只保留账号、密码、备份和恢复。</li>
+                <li>密码会先在浏览器内加密，再发送到云端进行校验或保存哈希。</li>
+                <li>更新日志加入应用侧边栏，可以在右侧主区域直接查看。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">03</span>
+            <span class="version">v0.2.2</span>
+            <div class="content">
+              <h2>输入、主题与时间轴更新日志</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>金额类输入改为 step=any，不再限制只能按固定步长录入。</li>
+                <li>首次引导页新增每日工时实时预览，输入上下班和午休后立即显示正班与加班。</li>
+                <li>新增跟随系统、浅色、深色三种主题模式，修正深色模式下白色输入框和低对比文字。</li>
+                <li>新增当前时间轴更新日志页面，整体风格参考 portfolio 的经历部分。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">04</span>
+            <span class="version">v0.2.1</span>
+            <div class="content">
+              <h2>云同步、后台与真实排班</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>新增自定义每周开始日、双休、单休、自定义周休、上六休一和上十四休一。</li>
+                <li>新增云备份服务，支持多设备保存和恢复数据。</li>
+                <li>新增用户看板，可查看用户数、IP 网段分布、同步/登录使用情况并改密或停用用户。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">05</span>
+            <span class="version">v0.2.0</span>
+            <div class="content">
+              <h2>数据可视化与深色适配</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>报表页新增薪资构成饼图和周工时趋势图。</li>
+                <li>记录页新增搜索和日期范围筛选。</li>
+                <li>日历每周底部显示工时和工资小计。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">06</span>
+            <span class="version">v0.1.8</span>
+            <div class="content">
+              <h2>未补登工作日</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>日历顶部新增未补登面板，自动扫描当月缺记录的工作日。</li>
+                <li>点击日期即可跳到当天登记，移动端使用横向滚动列表。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">07</span>
+            <span class="version">v0.1.7</span>
+            <div class="content">
+              <h2>首次使用向导</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>新增首次使用向导，引导配置薪资方式、底薪和班次。</li>
+                <li>设置页改为分组折叠，减少滚动和认知负担。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">08</span>
+            <span class="version">v0.1.6</span>
+            <div class="content">
+              <h2>每日登记交互优化</h2>
+              <span class="date">2026-05-12</span>
+              <ul>
+                <li>新增下班快捷调整、请假快捷时长、本条工资与本月税后预览。</li>
+                <li>批量添加和批量删除拆成两个模式，删除前显示影响并可撤销。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">09</span>
+            <span class="version">v0.1.0</span>
+            <div class="content">
+              <h2>PWA 基础版本</h2>
+              <span class="date">2026-05-11</span>
+              <ul>
+                <li>建立离线优先 PWA，支持月历工时、薪资模式、补扣、个税估算和报表导出。</li>
+                <li>数据默认保存在本机浏览器 localStorage，可导入导出 JSON 备份。</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script>
+      const themeOrder = ["system", "light", "dark"];
+      const labels = { system: "跟随系统", light: "浅色", dark: "深色" };
+      const button = document.querySelector("#theme-toggle");
+      const saved = localStorage.getItem("worktimeapp:changelog-theme") || "system";
+
+      function apply(mode) {
+        if (mode === "system") {
+          document.documentElement.removeAttribute("data-theme");
+        } else {
+          document.documentElement.dataset.theme = mode;
+        }
+        button.textContent = labels[mode] || labels.system;
+        localStorage.setItem("worktimeapp:changelog-theme", mode);
+      }
+
+      button.addEventListener("click", () => {
+        const current = localStorage.getItem("worktimeapp:changelog-theme") || "system";
+        apply(themeOrder[(themeOrder.indexOf(current) + 1) % themeOrder.length]);
+      });
+
+      apply(themeOrder.includes(saved) ? saved : "system");
+    </script>
+  </body>
+</html>

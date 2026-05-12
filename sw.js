@@ -1,14 +1,17 @@
-const CACHE_NAME = "worktimeapp-v12";
+const CACHE_NAME = "worktimeapp-v17";
 const ASSETS = [
   "./",
   "./index.html",
+  "./admin.html",
+  "./changelog.html",
   "./styles.css",
   "./src/app.js",
   "./src/calculations.js",
   "./src/export.js",
   "./src/storage.js",
   "./manifest.webmanifest",
-  "./assets/icon.svg"
+  "./assets/icon.svg",
+  "./assets/social-icons.svg"
 ];
 
 self.addEventListener("install", (event) => {

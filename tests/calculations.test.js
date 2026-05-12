@@ -482,6 +482,14 @@ test("calendar builder starts weeks on Monday and returns full weeks", () => {
   assert.equal(days.find((day) => day.date === "2026-05-01").holiday.dayType, "holiday");
 });
 
+test("calendar builder can use a custom week start", () => {
+  const sundayStart = buildCalendarDays(2026, 4, 0);
+  const wednesdayStart = buildCalendarDays(2026, 4, 3);
+  assert.equal(new Date(`${sundayStart[0].date}T00:00:00`).getDay(), 0);
+  assert.equal(sundayStart[0].date, "2026-04-26");
+  assert.equal(new Date(`${wednesdayStart[0].date}T00:00:00`).getDay(), 3);
+});
+
 test("rest reminders support non-weekend shift cycles", () => {
   const settings = mergeSettings({
     restCycle: {
@@ -497,6 +505,35 @@ test("rest reminders support non-weekend shift cycles", () => {
   const restDay = calculateRestReminder("2026-05-08", settings);
   assert.equal(restDay.isRestDue, true);
   assert.equal(restDay.daysUntilRest, 0);
+});
+
+test("rest reminders support weekly single and double rest patterns", () => {
+  const doubleWeekend = calculateRestReminder("2026-05-15", mergeSettings({
+    restCycle: { mode: REST_CYCLE_MODES.DOUBLE_WEEKEND }
+  }));
+  assert.equal(doubleWeekend.label, "每周双休");
+  assert.equal(doubleWeekend.nextRestDate, "2026-05-16");
+
+  const singleSunday = calculateRestReminder("2026-05-15", mergeSettings({
+    restCycle: { mode: REST_CYCLE_MODES.SINGLE_SUNDAY }
+  }));
+  assert.equal(singleSunday.label, "每周单休");
+  assert.equal(singleSunday.nextRestDate, "2026-05-17");
+});
+
+test("rest reminders can infer cycle anchor from recorded rest days", () => {
+  const settings = mergeSettings({
+    restCycle: {
+      mode: REST_CYCLE_MODES.WORK_14_REST_1,
+      lastRestDate: ""
+    }
+  });
+  const reminder = calculateRestReminder("2026-05-14", settings, [
+    { date: "2026-05-01", recordMode: RECORD_MODES.HOURS, dayType: "restday", totalHours: 0, source: "rest-day" }
+  ]);
+  assert.equal(reminder.requiresAnchor, false);
+  assert.equal(reminder.anchorDate, "2026-05-01");
+  assert.equal(reminder.nextRestDate, "2026-05-16");
 });
 
 test("leave pay calculations for different leave types", () => {
