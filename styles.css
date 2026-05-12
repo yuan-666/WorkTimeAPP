@@ -181,6 +181,7 @@ h3 {
 .icon-button,
 .plain-button,
 .primary-button,
+.danger-button,
 .file-button {
   min-height: 40px;
   border-radius: 8px;
@@ -207,6 +208,13 @@ h3 {
   background: var(--accent);
   color: #fff;
   font-weight: 700;
+}
+
+.danger-button {
+  border-color: rgba(180, 61, 66, 0.36);
+  background: #fff7f2;
+  color: var(--warn);
+  font-weight: 800;
 }
 
 .danger {
@@ -558,6 +566,65 @@ h3 {
   line-height: 1.4;
 }
 
+.rest-reminder,
+.shift-choice,
+.leave-panel,
+.time-preview {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.rest-reminder {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  margin-bottom: 12px;
+  border-color: rgba(23, 107, 91, 0.18);
+}
+
+.rest-reminder.is-due {
+  border-color: rgba(191, 111, 47, 0.26);
+  background: #fff9ed;
+}
+
+.rest-reminder span,
+.shift-choice span,
+.leave-panel span,
+.time-preview span,
+.time-preview small,
+.helper,
+.tax-note span,
+.rest-cycle-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.shift-choice > div:first-child,
+.leave-panel > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.time-preview {
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  border-color: rgba(23, 107, 91, 0.18);
+  background: #f8fbfa;
+}
+
+.time-preview strong {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.helper {
+  display: block;
+}
+
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -894,8 +961,9 @@ output {
 .bulk-panel,
 .bulk-tool,
 .insight-panel,
-.law-card,
-.holiday-card {
+.holiday-card,
+.tax-note,
+.rest-cycle-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -909,8 +977,9 @@ output {
 
 .bulk-panel div,
 .insight-panel div,
-.law-card div,
-.holiday-card div {
+.holiday-card div,
+.tax-note,
+.rest-cycle-card > div:first-child {
   display: grid;
   gap: 4px;
 }
@@ -918,36 +987,27 @@ output {
 .bulk-panel span,
 .insight-panel span,
 .insight-panel p,
-.law-card span,
-.law-card p,
 .holiday-card span,
-.holiday-card p {
+.holiday-card p,
+.tax-note span,
+.rest-cycle-card span {
   font-size: 13px;
 }
 
 .insight-panel,
-.law-card,
-.holiday-card {
+.holiday-card,
+.tax-note,
+.rest-cycle-card {
   align-items: flex-start;
   border-color: rgba(23, 107, 91, 0.25);
   background: #f4fbf8;
 }
 
 .insight-panel p,
-.law-card p,
 .holiday-card p {
   max-width: 360px;
   margin: 0;
   line-height: 1.5;
-}
-
-.law-card {
-  background: #fff9ed;
-  border-color: rgba(191, 111, 47, 0.24);
-}
-
-.law-card strong {
-  color: var(--accent-2);
 }
 
 .bulk-tool {
@@ -982,40 +1042,6 @@ output {
 .confirm-delete {
   border-color: rgba(180, 61, 66, 0.24);
   background: #fff7f2;
-}
-
-.law-panel {
-  margin-top: 18px;
-}
-
-.law-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.law-grid div {
-  min-height: 58px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.law-grid span,
-.law-panel li {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.law-grid strong {
-  display: block;
-  margin-top: 4px;
-}
-
-.law-panel ul {
-  margin: 10px 0 0;
-  padding-left: 18px;
 }
 
 .preset-editor {
@@ -1181,7 +1207,9 @@ output {
   .readiness,
   .bulk-panel,
   .bulk-tool,
-  .insight-panel {
+  .insight-panel,
+  .rest-cycle-card,
+  .tax-note {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1199,12 +1227,9 @@ output {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .law-card {
-    flex-direction: column;
-  }
-
-  .law-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .rest-reminder,
+  .time-preview {
+    grid-template-columns: 1fr;
   }
 
   .day-status {

@@ -1,15 +1,15 @@
 import {
   DEFAULT_SETTINGS,
-  LEGAL_RULES,
   RECORD_MODES,
+  REST_CYCLE_MODES,
   SALARY_MODES,
   WORK_LIMITS,
   buildCalendarDays,
-  calculateComplianceSummary,
   buildEntryFromShiftPreset,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
   calculateMonthlyPayroll,
+  calculateRestReminder,
   calculateTimeHours,
   deriveSalaryInsights,
   formatDate,
@@ -57,7 +57,8 @@ if (repairedOnLoad) {
 }
 
 const MONTHS = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const MODE_LABELS = {
   [SALARY_MODES.REGULAR_OVERTIME]: "正班+加班",
   [SALARY_MODES.BASE_OVERTIME]: "底薪+加班",
@@ -76,6 +77,13 @@ const MISSING_LABELS = {
   baseOvertimeRate: "加班基数",
   comprehensiveHourlyRate: "综合工时时薪",
   hourlyRate: "小时工时薪"
+};
+const LEAVE_TYPES = {
+  annual: "年假",
+  personal: "事假",
+  sick: "病假",
+  restAdjust: "调休",
+  other: "其他请假"
 };
 
 render();
@@ -205,12 +213,6 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
-  if (action === "seed-demo") {
-    seedDemoData();
-    persist("已加入示例记录");
-    render();
-  }
-
   if (action === "repair-records") {
     const count = repairRepeatedEntries();
     if (count) {
@@ -263,6 +265,8 @@ document.addEventListener("input", (event) => {
 document.addEventListener("change", async (event) => {
   if (event.target.closest("#entry-form")) {
     const form = event.target.closest("#entry-form");
+    if (event.target.name === "leaveType") applyLeaveTypeDefaults(form, event.target.value);
+    if (event.target.name === "leavePayMode") applyLeavePayModeDefaults(form, event.target.value);
     form?.setAttribute("data-record-mode", form.elements.recordMode?.value || RECORD_MODES.TIME);
     updateEntryPreview();
   }
@@ -291,6 +295,14 @@ document.addEventListener("change", async (event) => {
     }
   }
 });
+
+document.addEventListener("wheel", () => {
+  blurActiveTimeEditor();
+}, { passive: true, capture: true });
+
+document.addEventListener("touchmove", () => {
+  blurActiveTimeEditor();
+}, { passive: true, capture: true });
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -385,7 +397,7 @@ function renderReadiness() {
   const insights = deriveSalaryInsights(state.settings);
   const missing = insights.missingConfig.map((key) => MISSING_LABELS[key] || key);
   const integrityIssues = findEntryIntegrityIssues();
-  const compliance = calculateComplianceSummary(state.entries, state.settings, ui.year, ui.monthIndex);
+  const restReminder = calculateRestReminder(today, state.settings);
   const backupText = state.backup?.lastExportedAt
     ? `最近备份 ${formatDateTime(state.backup.lastExportedAt)}`
     : "尚未备份";
@@ -395,14 +407,14 @@ function renderReadiness() {
     insights.isDerived.hourlyRate ? `小时工时薪 ${money(insights.rates.hourlyRate)} 自动推算` : "",
     insights.isDerived.comprehensiveHourlyRate ? `综合工时时薪 ${money(insights.rates.comprehensiveHourlyRate)} 自动推算` : ""
   ].filter(Boolean).join("，");
-  const needsAttention = missing.length || integrityIssues.length || compliance.warnings.length;
+  const needsAttention = missing.length || integrityIssues.length || restReminder.isRestDue || restReminder.requiresAnchor;
   const issueDates = integrityIssues.slice(0, 3).map((item) => item.date.slice(5)).join("、");
   const title = integrityIssues.length
     ? `发现 ${integrityIssues.length} 天工时异常`
-    : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : (compliance.warnings.length ? "存在加班合规提醒" : "工资规则已就绪"));
+    : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : (restReminder.isRestDue ? "今天建议安排休息" : "工资规则已就绪"));
   const detail = integrityIssues.length
     ? `${issueDates} 超过合理上限，请整理或编辑`
-    : (missing.length ? missing.join("、") : (compliance.warnings[0] || derivedText || "工作日加班按不低于 1.5 倍计算"));
+    : (missing.length ? missing.join("、") : (derivedText || `${restReminder.label}：${restReminder.detail}`));
   return `
     <section class="readiness ${needsAttention ? "needs-attention" : ""}">
       <div>
@@ -411,7 +423,7 @@ function renderReadiness() {
       </div>
       <div>
         <span>${backupText}</span>
-        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="${compliance.warnings.length ? "reports" : "settings"}">${compliance.warnings.length ? "查看" : "规则"}</button>`}
+        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="settings">规则</button>`}
       </div>
     </section>
   `;
@@ -445,6 +457,7 @@ function renderCalendarView() {
           </div>
         </div>
         ${renderDayStatus(selectedEntries)}
+        ${renderRestReminderCard(ui.selectedDate)}
         ${renderEntryForm()}
         ${renderSelectedDayList(selectedEntries, selectedAdjustments)}
       </section>
@@ -460,24 +473,36 @@ function renderDayStatus(entries) {
   const regularHours = round2(normalized.reduce((sum, entry) => sum + entry.regularHours, 0));
   const overtimeHours = round2(normalized.reduce((sum, entry) => sum + entry.overtimeHours, 0));
   const pay = round2(entries.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
-  const isWarning = totalHours > WORK_LIMITS.maxDayHours;
   const text = entries.length
     ? `${entries.length} 条记录，正班 ${regularHours}h，加班 ${overtimeHours}h`
-    : `${holiday ? holiday.name : DAY_TYPE_LABELS[inferredDayType]}，可直接选班次保存`;
+    : (inferredDayType === "workday" ? "默认有班，确认班次后保存" : `${holiday ? holiday.name : DAY_TYPE_LABELS[inferredDayType]}，按实际情况记录`);
   const ruleText = entries.length ? payRuleTextForEntries(entries) : payRuleTextForDayType(inferredDayType);
   const dayMeta = holiday
     ? `${holiday.marker}${holiday.adjusted ? " · 调休上班" : ""}`
-    : (inferredDayType === "restday" ? "周末休息日" : "默认工作日");
+    : (inferredDayType === "restday" ? "休息日" : "默认工作日");
   return `
-    <div class="day-status ${isWarning ? "is-warning" : ""}">
+    <div class="day-status">
       <div>
         <strong>${totalHours ? `${totalHours}h` : "未记录"}</strong>
         <span>${text}</span>
       </div>
       <div>
         <b>${money(pay)}</b>
-        <span>${dayMeta} · ${ruleText} · 上限 ${WORK_LIMITS.maxDayHours}h</span>
+        <span>${dayMeta} · ${ruleText}</span>
       </div>
+    </div>
+  `;
+}
+
+function renderRestReminderCard(date) {
+  const reminder = calculateRestReminder(date, state.settings);
+  const text = reminder.requiresAnchor
+    ? "设置上一次休息日后，系统会按你的排班反推下一次该休息的日子。"
+    : `${reminder.detail}${reminder.nextRestDate ? ` · 下次 ${reminder.nextRestDate}` : ""}`;
+  return `
+    <div class="rest-reminder ${reminder.isRestDue ? "is-due" : ""}">
+      <span>${escapeHtml(reminder.label)}</span>
+      <strong>${escapeHtml(text)}</strong>
     </div>
   `;
 }
@@ -522,9 +547,9 @@ function payRuleTextForEntries(entries) {
 }
 
 function payRuleTextForDayType(dayType) {
-  if (dayType === "holiday") return `法定假日 ${overtimeMultiplierForDay("holiday", state.settings)} 倍`;
-  if (dayType === "restday") return `休息日 ${overtimeMultiplierForDay("restday", state.settings)} 倍`;
-  return `工作日加班 ${overtimeMultiplierForDay("workday", state.settings)} 倍`;
+  if (dayType === "holiday") return `假日倍率 ${overtimeMultiplierForDay("holiday", state.settings)} 倍`;
+  if (dayType === "restday") return `休息日倍率 ${overtimeMultiplierForDay("restday", state.settings)} 倍`;
+  return `加班倍率 ${overtimeMultiplierForDay("workday", state.settings)} 倍`;
 }
 
 function renderEntryForm() {
@@ -532,6 +557,11 @@ function renderEntryForm() {
   const inferredDayType = inferDayType(ui.selectedDate, state.settings);
   const holiday = getHolidayInfo(ui.selectedDate);
   const overtimePreset = findPresetByIntent("overtime");
+  const defaultPreset = getWorkDefaultPreset(state.settings);
+  const defaultEntry = buildEntryFromShiftPreset(ui.selectedDate, defaultPreset, {
+    settings: state.settings,
+    dayType: defaultPreset?.dayType && defaultPreset.dayType !== "workday" ? defaultPreset.dayType : inferredDayType
+  });
   const intentEntry = ui.entryIntent === "leave-note" && editing
     ? {
         ...editing,
@@ -540,21 +570,27 @@ function renderEntryForm() {
         regularHours: 0,
         overtimeHours: 0,
         totalHours: 0,
+        leaveType: editing.leaveType || "annual",
+        leavePayMode: editing.leavePayMode || "paid",
+        leavePayMultiplier: editing.leavePayMultiplier ?? 1,
+        leaveDeductionAmount: editing.leaveDeductionAmount || 0,
+        leaveHours: editing.leaveHours || state.settings.normalHoursPerDay,
         source: "leave-note"
       }
     : editing;
   const entry = intentEntry || {
-    date: ui.selectedDate,
-    recordMode: ui.entryIntent === "leave-note" ? RECORD_MODES.HOURS : RECORD_MODES.TIME,
-    dayType: inferredDayType,
-    startTime: "09:00",
-    endTime: "18:00",
-    breakMinutes: 60,
-    regularHours: ui.entryIntent === "leave-note" ? 0 : state.settings.normalHoursPerDay,
-    overtimeHours: 0,
-    totalHours: ui.entryIntent === "leave-note" ? 0 : state.settings.normalHoursPerDay,
+    ...defaultEntry,
+    recordMode: ui.entryIntent === "leave-note" ? RECORD_MODES.HOURS : defaultEntry.recordMode,
+    regularHours: ui.entryIntent === "leave-note" ? 0 : defaultEntry.regularHours,
+    overtimeHours: ui.entryIntent === "leave-note" ? 0 : defaultEntry.overtimeHours,
+    totalHours: ui.entryIntent === "leave-note" ? 0 : defaultEntry.totalHours,
     note: "",
     target: "",
+    leaveType: "annual",
+    leavePayMode: "paid",
+    leavePayMultiplier: 1,
+    leaveDeductionAmount: 0,
+    leaveHours: state.settings.normalHoursPerDay,
     source: ui.entryIntent
   };
   const recordMode = entry.recordMode || RECORD_MODES.TIME;
@@ -566,6 +602,17 @@ function renderEntryForm() {
   const isNormalChoice = !isRestChoice && !isNoteChoice && !isOvertimeChoice;
   const advancedClass = ui.entryAdvanced || editing ? "" : "is-collapsed";
   const advancedLabel = ui.entryAdvanced || editing ? "收起更多" : "更多设置";
+  const timeTools = isNoteChoice ? renderLeaveFields(entry) : `
+      ${renderShiftChoice(entry)}
+      <div class="mode-fields time-fields">
+        <div class="form-grid compact-times">
+          ${field("上班", `<input name="startTime" type="time" value="${escapeAttr(entry.startTime || "09:00")}" enterkeyhint="done">`)}
+          ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}" enterkeyhint="done">`)}
+          ${field("休息", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}" inputmode="numeric" enterkeyhint="done">`)}
+        </div>
+      </div>
+      <div class="time-preview" id="time-preview" aria-live="polite"></div>
+    `;
   return `
     <form id="entry-form" class="tool-form" data-record-mode="${recordMode}">
       <input type="hidden" name="id" value="${escapeAttr(entry.id || "")}">
@@ -581,18 +628,9 @@ function renderEntryForm() {
         ${entryIntentButton("normal", "正常上班", "默认班次，自动算加班", isNormalChoice)}
         ${entryIntentButton("overtime", "有加班", overtimePreset ? escapeHtml(overtimePreset.name) : "晚下班自动拆加班", isOvertimeChoice)}
         ${entryIntentButton("rest", "休息", "一键标记，不计工资", isRestChoice)}
-        ${entryIntentButton("note", "请假/备注", "只补充说明", isNoteChoice)}
+        ${entryIntentButton("note", "请假", "年假事假病假都在这里", isNoteChoice)}
       </div>
-      <div class="preset-grid" aria-label="班次模板">
-        ${state.settings.shiftPresets.map((preset) => renderPresetButton(preset, entry)).join("")}
-      </div>
-      <div class="mode-fields time-fields">
-        <div class="form-grid compact-times">
-          ${field("上班", `<input name="startTime" type="time" value="${escapeAttr(entry.startTime || "09:00")}">`)}
-          ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}">`)}
-          ${field("休息", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}" inputmode="numeric">`)}
-        </div>
-      </div>
+      ${timeTools}
       <div class="entry-advanced ${advancedClass}">
         <div class="form-grid">
         ${field("日期", `<input name="date" type="date" value="${escapeAttr(entry.date || ui.selectedDate)}" required>`)}
@@ -614,6 +652,7 @@ function renderEntryForm() {
             ${field("加班小时", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
             ${field("总小时", `<input name="totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
           </div>
+          <small class="helper">只有选择“直接填小时”时才需要改这里；按上下班时间会自动计算总时长。</small>
         </div>
         ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="今天想完成什么">`)}
         ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="请假、调班、特殊说明">${escapeHtml(entry.note || "")}</textarea>`)}
@@ -622,7 +661,7 @@ function renderEntryForm() {
       <div id="entry-error" class="form-error" role="alert" ${ui.entryError ? "" : "hidden"}>${escapeHtml(ui.entryError)}</div>
       <div class="form-footer form-footer-strong">
         <output id="entry-preview">0h / ¥0.00</output>
-        <button class="primary-button submit-button" type="submit" name="saveMode" value="work">${editing ? "保存修改" : (sourceHint === "leave-note" ? "保存备注" : "保存今日记录")}</button>
+        <button class="primary-button submit-button" type="submit" name="saveMode" value="work">${editing ? "保存修改" : (sourceHint === "leave-note" ? "保存请假" : "保存今日记录")}</button>
       </div>
     </form>
   `;
@@ -637,6 +676,56 @@ function entryIntentButton(intent, title, detail, active = false) {
       <strong>${escapeHtml(title)}</strong>
       <span>${escapeHtml(detail)}</span>
     </button>
+  `;
+}
+
+function renderShiftChoice(entry) {
+  const workPresets = workShiftPresets(state.settings);
+  const hasDifferentWorkShifts = workPresets.length > 1 && !presetsHaveSameTime(workPresets);
+  return `
+    <div class="shift-choice">
+      <div>
+        <span>今日班次</span>
+        <strong>${hasDifferentWorkShifts ? "白班和夜班时间不同，先选今天上哪个班" : "工作日默认有班，确认后保存即可"}</strong>
+      </div>
+      <div class="preset-grid" aria-label="班次模板">
+        ${state.settings.shiftPresets.map((preset) => renderPresetButton(preset, entry)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderLeaveFields(entry) {
+  const leaveType = entry.leaveType || "annual";
+  const leavePayMode = entry.leavePayMode || "paid";
+  return `
+    <div class="leave-panel">
+      <div>
+        <span>请假信息</span>
+        <strong>选择假别和计薪方式</strong>
+      </div>
+      <div class="form-grid">
+        ${field("假别", `
+          <select name="leaveType">
+            ${Object.entries(LEAVE_TYPES).map(([value, label]) => option(value, label, leaveType)).join("")}
+          </select>
+        `)}
+        ${field("是否扣工资", `
+          <select name="leavePayMode">
+            ${option("paid", "带薪", leavePayMode)}
+            ${option("unpaid", "不计薪", leavePayMode)}
+            ${option("deduct", "扣工资", leavePayMode)}
+            ${option("custom", "按倍数计薪", leavePayMode)}
+          </select>
+        `)}
+      </div>
+      <div class="form-grid">
+        ${field("计薪倍数", `<input name="leavePayMultiplier" type="number" min="0" step="0.1" value="${escapeAttr(entry.leavePayMultiplier ?? 1)}" inputmode="decimal" enterkeyhint="done">`)}
+        ${field("请假小时", `<input name="leaveHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.leaveHours ?? state.settings.normalHoursPerDay)}" inputmode="decimal" enterkeyhint="done">`)}
+        ${field("扣工资金额", `<input name="leaveDeductionAmount" type="number" min="0" step="0.01" value="${escapeAttr(entry.leaveDeductionAmount || 0)}" inputmode="decimal" enterkeyhint="done">`)}
+      </div>
+      <small class="helper">年假通常可选带薪；事假可选不计薪或扣工资。这里按你实际工资规则记录，不再做额外提醒。</small>
+    </div>
   `;
 }
 
@@ -736,7 +825,6 @@ function renderRecordsView() {
             <p class="eyebrow">${monthEntries.length + monthAdjustments.length} 条</p>
             <h2>本月明细</h2>
           </div>
-          <button class="plain-button" type="button" data-action="seed-demo">示例</button>
         </div>
         <div class="timeline">
           ${monthEntries.map((entry) => `<div><time>${entry.date}</time>${renderEntryItem(entry)}</div>`).join("") || `<p class="empty">暂无工时记录</p>`}
@@ -798,7 +886,7 @@ function renderBulkPreview() {
         </label>
       </div>
       <div class="form-footer">
-        <button class="plain-button" type="submit" name="bulkAction" value="delete">批量删除</button>
+        <button class="danger-button" type="submit" name="bulkAction" value="delete">批量删除</button>
         <button class="primary-button" type="submit" name="bulkAction" value="add">批量添加</button>
       </div>
     </form>
@@ -833,7 +921,6 @@ function renderAdjustmentForm() {
 function renderReportsView() {
   const yearSummary = summarizeYear(state.entries, state.adjustments, state.settings, ui.year);
   const selected = yearSummary[ui.monthIndex];
-  const compliance = calculateComplianceSummary(state.entries, state.settings, ui.year, ui.monthIndex);
   const maxIncome = Math.max(1, ...yearSummary.map((item) => item.netIncome));
   const maxHours = Math.max(1, ...yearSummary.map((item) => item.totalHours));
   const incomeGoal = Number(state.settings.goals.monthlyIncome) || 0;
@@ -902,32 +989,9 @@ function renderReportsView() {
           ${goal("收入目标", selected.netIncome, incomeGoal, money(selected.netIncome), money(incomeGoal))}
           ${goal("工时目标", selected.totalHours, hoursGoal, `${selected.totalHours}h`, `${hoursGoal}h`)}
         </div>
-        ${renderCompliancePanel(compliance)}
       </section>
     </div>
   `;
-}
-
-function renderCompliancePanel(compliance) {
-  const warnings = compliance.warnings.length
-    ? compliance.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
-    : `<li>本月未触发加班风险提醒</li>`;
-  return `
-    <div class="law-panel">
-      <h3>法定口径校验</h3>
-      <div class="law-grid">
-        ${lawMetric("工作日", `${LEGAL_RULES.workdayOvertimeMultiplier}x`)}
-        ${lawMetric("休息日", `${LEGAL_RULES.restDayOvertimeMultiplier}x`)}
-        ${lawMetric("法定假日", `${LEGAL_RULES.holidayOvertimeMultiplier}x`)}
-        ${lawMetric("月加班", `${compliance.monthlyOvertimeHours}h / ${LEGAL_RULES.monthlyOvertimeLimit}h`)}
-      </div>
-      <ul>${warnings}</ul>
-    </div>
-  `;
-}
-
-function lawMetric(label, value) {
-  return `<div><span>${label}</span><strong>${value}</strong></div>`;
 }
 
 function renderSettingsView() {
@@ -949,9 +1013,8 @@ function renderSettingsView() {
               <span>自动推算</span>
               <strong>正班 ${money(insights.regularHourlyRate)} / 小时 ${money(insights.rates.hourlyRate)}</strong>
             </div>
-            <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `按 ${LEGAL_RULES.paidDaysPerMonth} 天计薪，小时工资 = 月工资 ÷ ${LEGAL_RULES.wageHourlyDivisor}。`}</p>
+            <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪，也可以手动填写。`}</p>
           </div>
-          ${renderLegalRuleCard()}
           ${field("薪资方式", `
             <select name="salaryMode">
               ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
@@ -961,20 +1024,20 @@ function renderSettingsView() {
             </select>
           `)}
           <div class="form-grid">
-            ${modeFields.includes("normalHoursPerDay") ? numberField(`每日正班小时（法定 ${LEGAL_RULES.dailyStandardHours}h）`, "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
+            ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
             ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
-            ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时（21.75×8）", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+            ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
             ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
             ${modeFields.includes("hourlyRate") ? numberField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate, 0.01) : ""}
             ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
             ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
-            ${modeFields.includes("comprehensiveTargetHours") ? numberField(`综合目标小时（默认 ${LEGAL_RULES.standardMonthlyWorkHours}）`, "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+            ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
           </div>
           <div class="form-grid">
-            ${numberField("工作日加班倍率（不低于1.5）", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { min: LEGAL_RULES.workdayOvertimeMultiplier, max: 5 })}
-            ${numberField("休息日倍率（未补休不低于2）", "restDayMultiplier", settings.restDayMultiplier, 0.05, { min: LEGAL_RULES.restDayOvertimeMultiplier, max: 5 })}
-            ${numberField("法定节假日倍率（不低于3）", "holidayMultiplier", settings.holidayMultiplier, 0.05, { min: LEGAL_RULES.holidayOvertimeMultiplier, max: 5 })}
-            ${numberField("综合超时倍率（不低于1.5）", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { min: LEGAL_RULES.workdayOvertimeMultiplier, max: 5 })}
+            ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
+            ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
+            ${numberField("节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
+            ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
           </div>
           <h3>目标</h3>
           <div class="form-grid">
@@ -992,9 +1055,11 @@ function renderSettingsView() {
           </div>
           <h3>工作日与自动补扣</h3>
           <div class="workweek-grid">
-            ${WEEKDAYS.map((day, index) => checkbox(`workweek.${index}`, String(index), day, settings.workweek.includes(index))).join("")}
+            ${WEEKDAY_ORDER.map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), weekLabelByIndex(weekday), settings.workweek.includes(weekday))).join("")}
           </div>
           ${renderHolidayRuleCard()}
+          <h3>放假提醒</h3>
+          ${renderRestCycleSettings(settings)}
           <label class="check-row">
             <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
             <span>保存工时时自动添加日补扣</span>
@@ -1006,12 +1071,18 @@ function renderSettingsView() {
             ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
           </div>
           <h3>个税</h3>
+          <div class="tax-note">
+            <strong>累计预扣法</strong>
+            <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
+          </div>
           <div class="form-grid">
             ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
-            ${numberField("固定扣除", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01)}
             ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
-            ${numberField("扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 })}
-            ${numberField("社保公积金固定", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01)}
+            ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
+            ${numberField("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01)}
+            ${numberField("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 })}
+            ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
+            ${numberField("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01)}
             ${numberField("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 })}
           </div>
           <div class="form-footer">
@@ -1030,18 +1101,6 @@ function renderSettingsView() {
   `;
 }
 
-function renderLegalRuleCard() {
-  return `
-    <div class="law-card">
-      <div>
-        <span>加班工资</span>
-        <strong>1.5x / 2x / 3x</strong>
-      </div>
-      <p>工作日延长工时按不低于 1.5 倍；休息日未安排补休按不低于 2 倍；法定节假日按不低于 3 倍。系统会自动按法定下限兜底。</p>
-    </div>
-  `;
-}
-
 function renderHolidayRuleCard() {
   const sample = getHolidayInfo(`${ui.year}-01-01`) || getHolidayInfo("2026-01-01");
   return `
@@ -1055,11 +1114,39 @@ function renderHolidayRuleCard() {
   `;
 }
 
+function renderRestCycleSettings(settings) {
+  const reminder = calculateRestReminder(today, settings);
+  return `
+    <div class="rest-cycle-card">
+      <div>
+        <span>${escapeHtml(reminder.label)}</span>
+        <strong>${escapeHtml(reminder.detail)}</strong>
+      </div>
+      <div class="form-grid">
+        ${field("放假形式", `
+          <select name="restCycle.mode">
+            ${option(REST_CYCLE_MODES.WORKWEEK, "按每周休息日", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.WORK_6_REST_1, "上六休一", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.WORK_14_REST_1, "上十四休一", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.CUSTOM, "自定义", settings.restCycle.mode)}
+          </select>
+        `)}
+        ${field("上一次休息", `<input name="restCycle.lastRestDate" type="date" value="${escapeAttr(settings.restCycle.lastRestDate || "")}">`)}
+        ${numberField("连续上班天数", "restCycle.workDays", settings.restCycle.workDays, 1, { min: 1, max: 31 })}
+        ${numberField("连续休息天数", "restCycle.restDays", settings.restCycle.restDays, 1, { min: 1, max: 14 })}
+      </div>
+    </div>
+  `;
+}
+
 function saveEntry(form, saveMode = "work") {
   const data = Object.fromEntries(new FormData(form));
   const existingId = data.id || ui.editingEntryId;
   const existing = state.entries.find((item) => item.id === existingId);
   if (data.sourceHint === "leave-note") {
+    const leaveDefaults = leaveDefaultsForType(data.leaveType);
+    const leavePayMode = data.leavePayMode || leaveDefaults.leavePayMode;
+    const leaveMultiplier = leavePayMode === "unpaid" ? 0 : Number(data.leavePayMultiplier || leaveDefaults.leavePayMultiplier);
     saveEntryObject({
       id: existingId || createId("entry"),
       date: data.date,
@@ -1068,12 +1155,17 @@ function saveEntry(form, saveMode = "work") {
       regularHours: 0,
       overtimeHours: 0,
       totalHours: 0,
+      leaveType: data.leaveType || "annual",
+      leavePayMode,
+      leavePayMultiplier: leaveMultiplier,
+      leaveHours: Number(data.leaveHours || state.settings.normalHoursPerDay),
+      leaveDeductionAmount: leavePayMode === "deduct" ? Number(data.leaveDeductionAmount || 0) : 0,
       target: data.target?.trim() || "",
-      note: data.note?.trim() || "请假/备注",
+      note: data.note?.trim() || LEAVE_TYPES[data.leaveType] || "请假",
       source: "leave-note",
       updatedAt: new Date().toISOString(),
       createdAt: existing?.createdAt || new Date().toISOString()
-    }, "已保存备注", { skipAutoAdjustment: true });
+    }, "已保存请假", { skipAutoAdjustment: true });
     return;
   }
   if (saveMode === "rest") {
@@ -1228,12 +1320,15 @@ function saveSettings(form) {
 function updateEntryPreview() {
   const form = document.querySelector("#entry-form");
   const output = document.querySelector("#entry-preview");
+  const timePreview = document.querySelector("#time-preview");
   const errorBox = document.querySelector("#entry-error");
   if (!form || !output) return;
   const data = Object.fromEntries(new FormData(form));
   const recordMode = data.recordMode || RECORD_MODES.TIME;
   let totalHours = 0;
-  if (recordMode === RECORD_MODES.TIME) {
+  if (data.sourceHint === "leave-note") {
+    totalHours = 0;
+  } else if (recordMode === RECORD_MODES.TIME) {
     totalHours = calculateTimeHours(data.startTime, data.endTime, Number(data.breakMinutes || 0));
   } else {
     const regular = Number(data.regularHours || 0);
@@ -1248,7 +1343,12 @@ function updateEntryPreview() {
     breakMinutes: Number(data.breakMinutes || 0),
     regularHours: Number(data.regularHours || 0),
     overtimeHours: Number(data.overtimeHours || 0),
-    totalHours
+    totalHours,
+    leaveType: data.leaveType,
+    leavePayMode: data.leavePayMode,
+    leavePayMultiplier: Number(data.leavePayMultiplier || 0),
+    leaveHours: Number(data.leaveHours || state.settings.normalHoursPerDay),
+    leaveDeductionAmount: Number(data.leaveDeductionAmount || 0)
   };
   const normalized = normalizeEntry(entry, state.settings);
   const pay = calculateEntryPay(entry, state.settings);
@@ -1256,6 +1356,13 @@ function updateEntryPreview() {
   output.textContent = validation.valid
     ? `${normalized.totalHours}h / ${money(pay.totalPay)}`
     : `${normalized.totalHours}h / 不可保存`;
+  if (timePreview) {
+    timePreview.innerHTML = `
+      <span>当天工时</span>
+      <strong>${normalized.totalHours}h</strong>
+      <small>正班 ${normalized.regularHours}h · 加班 ${normalized.overtimeHours}h · 预计 ${money(pay.totalPay)}</small>
+    `;
+  }
   const message = ui.entryError || validation.errors[0] || validation.warnings[0] || "";
   if (errorBox) {
     errorBox.hidden = !message;
@@ -1294,13 +1401,24 @@ function applyEntryIntent(intent) {
   if (!form) return;
   if (intent === "normal") {
     ui.entryIntent = "";
+    if (!form.elements.startTime) {
+      ui.entryAdvanced = false;
+      render();
+      return;
+    }
     form.elements.sourceHint.value = "";
-    applyPresetToForm(state.settings.defaultPresetId);
+    applyPresetToForm(getWorkDefaultPreset(state.settings)?.id || state.settings.defaultPresetId);
     setEntryChoiceActive("normal");
     return;
   }
   if (intent === "overtime") {
     ui.entryIntent = "";
+    if (!form.elements.startTime) {
+      ui.entryAdvanced = false;
+      render();
+      window.setTimeout(() => applyEntryIntent("overtime"), 0);
+      return;
+    }
     form.elements.sourceHint.value = "";
     applyPresetToForm(findPresetByIntent("overtime")?.id || state.settings.defaultPresetId);
     setEntryChoiceActive("overtime");
@@ -1310,7 +1428,7 @@ function applyEntryIntent(intent) {
     ui.entryIntent = "leave-note";
     ui.entryAdvanced = true;
     render();
-    document.querySelector("#entry-form textarea[name='note']")?.focus();
+    document.querySelector("#entry-form select[name='leaveType']")?.focus();
   }
 }
 
@@ -1320,6 +1438,28 @@ function setEntryChoiceActive(intent) {
   for (const button of form.querySelectorAll("[data-choice-intent]")) {
     button.classList.toggle("is-active", button.dataset.choiceIntent === intent);
   }
+}
+
+function applyLeaveTypeDefaults(form, leaveType) {
+  if (!form?.elements.leavePayMode) return;
+  const defaults = leaveDefaultsForType(leaveType);
+  form.elements.leavePayMode.value = defaults.leavePayMode;
+  form.elements.leavePayMultiplier.value = defaults.leavePayMultiplier;
+  form.elements.leaveDeductionAmount.value = 0;
+}
+
+function applyLeavePayModeDefaults(form, mode) {
+  if (!form?.elements.leavePayMultiplier) return;
+  if (mode === "unpaid") form.elements.leavePayMultiplier.value = 0;
+  if (mode === "paid" && Number(form.elements.leavePayMultiplier.value || 0) === 0) {
+    form.elements.leavePayMultiplier.value = 1;
+  }
+}
+
+function leaveDefaultsForType(leaveType) {
+  if (leaveType === "personal") return { leavePayMode: "unpaid", leavePayMultiplier: 0 };
+  if (leaveType === "sick") return { leavePayMode: "custom", leavePayMultiplier: 0.8 };
+  return { leavePayMode: "paid", leavePayMultiplier: 1 };
 }
 
 function findPresetByIntent(intent) {
@@ -1586,57 +1726,6 @@ function undoDelete() {
   render();
 }
 
-function seedDemoData() {
-  const prefix = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}`;
-  state.entries = state.entries.concat([
-    {
-      id: createId("entry"),
-      date: `${prefix}-03`,
-      recordMode: RECORD_MODES.TIME,
-      dayType: "workday",
-      startTime: "09:00",
-      endTime: "20:30",
-      breakMinutes: 75,
-      note: "赶订单",
-      target: "完成首批",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: createId("entry"),
-      date: `${prefix}-08`,
-      recordMode: RECORD_MODES.HOURS,
-      dayType: "restday",
-      regularHours: 0,
-      overtimeHours: 6,
-      totalHours: 6,
-      note: "周末支援",
-      target: "",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: createId("entry"),
-      date: `${prefix}-16`,
-      recordMode: RECORD_MODES.TIME,
-      dayType: "workday",
-      startTime: "22:00",
-      endTime: "06:00",
-      breakMinutes: 30,
-      note: "夜班",
-      target: "",
-      createdAt: new Date().toISOString()
-    }
-  ]);
-  state.adjustments.push({
-    id: createId("adjustment"),
-    date: `${prefix}-20`,
-    type: "allowance",
-    amount: 180,
-    category: "餐补",
-    note: "",
-    createdAt: new Date().toISOString()
-  });
-}
-
 function persist(notice = "") {
   ui.notice = notice;
   saveState(state);
@@ -1748,18 +1837,45 @@ function settingsFieldsForMode(mode) {
   return ["normalHoursPerDay", "baseSalary", "standardMonthlyHours", "regularHourlyRate"];
 }
 
+function workShiftPresets(settings = state.settings) {
+  return (settings.shiftPresets || []).filter((preset) => {
+    return preset.recordMode === RECORD_MODES.TIME && preset.dayType !== "restday" && preset.dayType !== "holiday";
+  });
+}
+
+function getWorkDefaultPreset(settings = state.settings) {
+  const configured = getShiftPreset(settings, settings.defaultPresetId);
+  if (configured && configured.dayType !== "restday" && configured.dayType !== "holiday") return configured;
+  return workShiftPresets(settings)[0] || getShiftPreset(settings, settings.defaultPresetId);
+}
+
+function presetsHaveSameTime(presets = []) {
+  if (presets.length < 2) return true;
+  const [first] = presets;
+  return presets.every((preset) => {
+    return preset.startTime === first.startTime
+      && preset.endTime === first.endTime
+      && Number(preset.breakMinutes || 0) === Number(first.breakMinutes || 0);
+  });
+}
+
 function limitSettings(settings) {
   const next = mergeSettings(settings);
   next.normalHoursPerDay = boundedNumber(next.normalHoursPerDay, 0, WORK_LIMITS.maxRegularHours);
   next.standardMonthlyHours = boundedNumber(next.standardMonthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
   next.comprehensiveTargetHours = boundedNumber(next.comprehensiveTargetHours, 0, WORK_LIMITS.maxMonthlyHours);
   next.goals.monthlyHours = boundedNumber(next.goals.monthlyHours, 0, WORK_LIMITS.maxMonthlyHours);
-  next.overtimeMultiplier = boundedNumber(next.overtimeMultiplier, LEGAL_RULES.workdayOvertimeMultiplier, 5);
-  next.restDayMultiplier = boundedNumber(next.restDayMultiplier, LEGAL_RULES.restDayOvertimeMultiplier, 5);
-  next.holidayMultiplier = boundedNumber(next.holidayMultiplier, LEGAL_RULES.holidayOvertimeMultiplier, 5);
-  next.comprehensiveOvertimeMultiplier = boundedNumber(next.comprehensiveOvertimeMultiplier, LEGAL_RULES.workdayOvertimeMultiplier, 5);
+  next.overtimeMultiplier = boundedNumber(next.overtimeMultiplier, 0, 5);
+  next.restDayMultiplier = boundedNumber(next.restDayMultiplier, 0, 5);
+  next.holidayMultiplier = boundedNumber(next.holidayMultiplier, 0, 5);
+  next.comprehensiveOvertimeMultiplier = boundedNumber(next.comprehensiveOvertimeMultiplier, 0, 5);
   next.tax.deductionPercent = boundedNumber(next.tax.deductionPercent, 0, 100);
   next.tax.socialSecurityPercent = boundedNumber(next.tax.socialSecurityPercent, 0, 100);
+  next.tax.otherDeductionMode = ["fixed", "percent"].includes(next.tax.otherDeductionMode) ? next.tax.otherDeductionMode : "fixed";
+  next.tax.socialSecurityMode = ["fixed", "percent"].includes(next.tax.socialSecurityMode) ? next.tax.socialSecurityMode : "fixed";
+  next.restCycle.mode = Object.values(REST_CYCLE_MODES).includes(next.restCycle.mode) ? next.restCycle.mode : REST_CYCLE_MODES.WORKWEEK;
+  next.restCycle.workDays = boundedNumber(next.restCycle.workDays, 1, 31);
+  next.restCycle.restDays = boundedNumber(next.restCycle.restDays, 1, 14);
   return next;
 }
 
@@ -1767,6 +1883,12 @@ function boundedNumber(value, min, max) {
   const number = Number(value);
   if (!Number.isFinite(number)) return min;
   return Math.min(max, Math.max(min, number));
+}
+
+function blurActiveTimeEditor() {
+  const active = document.activeElement;
+  if (!active?.matches?.("#entry-form input[type='number'], #entry-form input[type='time']")) return;
+  active.blur();
 }
 
 function renderPresetEditor(preset, index) {
@@ -1854,15 +1976,19 @@ function viewTitle(view) {
 function selectedDateLabel(date) {
   const parsed = new Date(`${date}T00:00:00`);
   const holiday = getHolidayInfo(date);
-  return `${date} 周${WEEKDAYS[parsed.getDay()]}${holiday ? ` · ${holiday.name}` : ""}`;
+  return `${date} 周${weekLabelByIndex(parsed.getDay())}${holiday ? ` · ${holiday.name}` : ""}`;
 }
 
 function dayDecisionText(date, dayType, holiday) {
   const parsed = new Date(`${date}T00:00:00`);
-  const prefix = date === today ? "今天" : `周${WEEKDAYS[parsed.getDay()]}`;
-  if (dayType === "holiday") return `${prefix} · 法定节假日 · 按 3 倍`;
-  if (dayType === "restday") return `${prefix} · ${holiday?.name || "休息日"} · 按 2 倍`;
+  const prefix = date === today ? "今天" : `周${weekLabelByIndex(parsed.getDay())}`;
+  if (dayType === "holiday") return `${prefix} · 节假日 · 按当前倍率`;
+  if (dayType === "restday") return `${prefix} · ${holiday?.name || "休息日"} · 按休息日倍率`;
   return `${prefix} · 工作日 · 自动拆正班和加班`;
+}
+
+function weekLabelByIndex(index) {
+  return ({ 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 0: "日" })[Number(index)] || "";
 }
 
 function money(value) {

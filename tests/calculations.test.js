@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   LEGAL_RULES,
   RECORD_MODES,
+  REST_CYCLE_MODES,
   SALARY_MODES,
   WORK_LIMITS,
   calculateAnnualTax,
@@ -10,6 +11,7 @@ import {
   calculateEntryPay,
   calculateComplianceSummary,
   calculateMonthlyPayroll,
+  calculateRestReminder,
   calculateTimeHours,
   buildCalendarDays,
   buildEntryFromShiftPreset,
@@ -181,18 +183,18 @@ test("hourly mode pays regular hours and overtime premium by legal day type", ()
   assert.equal(restDayPay.totalPay, 384);
 });
 
-test("configured overtime multipliers cannot drop below legal minimums", () => {
+test("configured overtime multipliers can follow custom payroll rules", () => {
   const settings = mergeSettings({
     overtimeMultiplier: 1,
     restDayMultiplier: 1,
     holidayMultiplier: 1
   });
-  assert.equal(overtimeMultiplierForDay("workday", settings), LEGAL_RULES.workdayOvertimeMultiplier);
-  assert.equal(overtimeMultiplierForDay("restday", settings), LEGAL_RULES.restDayOvertimeMultiplier);
-  assert.equal(overtimeMultiplierForDay("holiday", settings), LEGAL_RULES.holidayOvertimeMultiplier);
+  assert.equal(overtimeMultiplierForDay("workday", settings), 1);
+  assert.equal(overtimeMultiplierForDay("restday", settings), 1);
+  assert.equal(overtimeMultiplierForDay("holiday", settings), 1);
 });
 
-test("comprehensive mode derives hourly rate from monthly wage and uses legal overtime premium", () => {
+test("comprehensive mode derives hourly rate from monthly wage and uses configured overtime premium", () => {
   const settings = mergeSettings({
     salaryMode: SALARY_MODES.COMPREHENSIVE,
     baseSalary: 8700,
@@ -207,7 +209,7 @@ test("comprehensive mode derives hourly rate from monthly wage and uses legal ov
   ], [], settings, 2026, 4);
   assert.equal(deriveSalaryInsights(settings).rates.comprehensiveHourlyRate, 50);
   assert.equal(payroll.regularPay, 500);
-  assert.equal(payroll.overtimePay, 450);
+  assert.equal(payroll.overtimePay, 400);
 });
 
 test("manual hour records use regular plus overtime as the source of truth", () => {
@@ -261,6 +263,22 @@ test("entry validation allows rest and leave markers without work hours", () => 
   });
   assert.equal(rest.valid, true);
   assert.equal(calculateEntryPay(rest.normalized).totalPay, 0);
+
+  const leave = validateEntry({
+    date: "2026-05-11",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "leave-note",
+    leavePayMode: "paid",
+    leavePayMultiplier: 1,
+    leaveHours: 8,
+    note: "年假"
+  });
+  assert.equal(leave.valid, true);
+  assert.equal(calculateEntryPay(leave.normalized, mergeSettings({ regularHourlyRate: 50 })).totalPay, 400);
 });
 
 test("entry validation checks daily aggregate limits", () => {
@@ -288,9 +306,9 @@ test("entry validation checks daily aggregate limits", () => {
   assert.match(result.errors.join(" "), /当天合计不能超过/);
 });
 
-test("entry validation and compliance summary warn when overtime exceeds legal guardrails", () => {
+test("entry validation keeps data limits without legal warning prompts", () => {
   const settings = mergeSettings();
-  const warning = validateEntry({
+  const result = validateEntry({
     id: "new",
     date: "2026-05-06",
     recordMode: RECORD_MODES.HOURS,
@@ -299,8 +317,8 @@ test("entry validation and compliance summary warn when overtime exceeds legal g
     overtimeHours: 4,
     totalHours: 12
   }, settings);
-  assert.equal(warning.valid, true);
-  assert.match(warning.warnings.join(" "), /超过 3 小时/);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.warnings, []);
 
   const summary = calculateComplianceSummary(Array.from({ length: 10 }, (_, index) => ({
     date: `2026-05-${String(index + 1).padStart(2, "0")}`,
@@ -311,7 +329,7 @@ test("entry validation and compliance summary warn when overtime exceeds legal g
     totalHours: 12
   })), settings, 2026, 4);
   assert.equal(summary.monthlyOvertimeHours, 40);
-  assert.match(summary.warnings.join(" "), /超过 36h/);
+  assert.deepEqual(summary.warnings, []);
   assert.equal(summary.dailyHardOvertimeDays.length, 10);
 });
 
@@ -426,9 +444,11 @@ test("annual tax bracket boundaries and cumulative monthly tax", () => {
   const settings = mergeSettings({
     tax: {
       standardDeductionMonthly: 5000,
+      otherDeductionMode: "fixed",
       fixedDeductionMonthly: 0,
       specialAdditionalDeductionMonthly: 0,
       deductionPercent: 0,
+      socialSecurityMode: "fixed",
       socialSecurityFixedMonthly: 0,
       socialSecurityPercent: 0
     }
@@ -437,12 +457,43 @@ test("annual tax bracket boundaries and cumulative monthly tax", () => {
   assert.equal(tax.taxableIncome, 10000);
   assert.equal(tax.cumulativeTax, 300);
   assert.equal(tax.currentTax, 150);
+
+  const percentTax = calculateCumulativeTaxForMonth([10000], mergeSettings({
+    tax: {
+      standardDeductionMonthly: 5000,
+      specialAdditionalDeductionMonthly: 0,
+      otherDeductionMode: "percent",
+      deductionPercent: 10,
+      socialSecurityMode: "percent",
+      socialSecurityPercent: 5
+    }
+  }), 0);
+  assert.equal(percentTax.taxableIncome, 3500);
+  assert.equal(percentTax.currentTax, 105);
 });
 
-test("calendar builder returns full weeks", () => {
+test("calendar builder starts weeks on Monday and returns full weeks", () => {
   const days = buildCalendarDays(2026, 4);
   assert.equal(days.length % 7, 0);
+  assert.equal(new Date(`${days[0].date}T00:00:00`).getDay(), 1);
   assert.equal(days.some((day) => day.date === "2026-05-01" && day.inMonth), true);
-  assert.equal(days.some((day) => day.date === "2026-06-01" && !day.inMonth), true);
+  assert.equal(days.some((day) => day.date === "2026-04-27" && !day.inMonth), true);
   assert.equal(days.find((day) => day.date === "2026-05-01").holiday.dayType, "holiday");
+});
+
+test("rest reminders support non-weekend shift cycles", () => {
+  const settings = mergeSettings({
+    restCycle: {
+      mode: REST_CYCLE_MODES.WORK_6_REST_1,
+      lastRestDate: "2026-05-01"
+    }
+  });
+  const beforeRest = calculateRestReminder("2026-05-06", settings);
+  assert.equal(beforeRest.isRestDue, false);
+  assert.equal(beforeRest.daysUntilRest, 2);
+  assert.equal(beforeRest.nextRestDate, "2026-05-08");
+
+  const restDay = calculateRestReminder("2026-05-08", settings);
+  assert.equal(restDay.isRestDue, true);
+  assert.equal(restDay.daysUntilRest, 0);
 });

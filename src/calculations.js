@@ -10,6 +10,13 @@ export const RECORD_MODES = {
   HOURS: "hours"
 };
 
+export const REST_CYCLE_MODES = {
+  WORKWEEK: "workweek",
+  WORK_6_REST_1: "work6rest1",
+  WORK_14_REST_1: "work14rest1",
+  CUSTOM: "custom"
+};
+
 export const LEGAL_RULES = {
   dailyStandardHours: 8,
   weeklyStandardHours: 44,
@@ -103,12 +110,21 @@ export const DEFAULT_SETTINGS = {
     monthlyHours: 220
   },
   tax: {
+    calculationMethod: "cumulative",
     standardDeductionMonthly: 5000,
+    otherDeductionMode: "fixed",
     fixedDeductionMonthly: 0,
     specialAdditionalDeductionMonthly: 0,
     deductionPercent: 0,
+    socialSecurityMode: "fixed",
     socialSecurityFixedMonthly: 0,
     socialSecurityPercent: 0
+  },
+  restCycle: {
+    mode: REST_CYCLE_MODES.WORKWEEK,
+    workDays: 5,
+    restDays: 2,
+    lastRestDate: ""
   }
 };
 
@@ -199,7 +215,8 @@ export function mergeSettings(partial = {}) {
     workweek: Array.isArray(partial.workweek) ? partial.workweek.map(Number) : DEFAULT_SETTINGS.workweek,
     autoAdjustment: { ...DEFAULT_SETTINGS.autoAdjustment, ...(partial.autoAdjustment || {}) },
     goals: { ...DEFAULT_SETTINGS.goals, ...(partial.goals || {}) },
-    tax: { ...DEFAULT_SETTINGS.tax, ...(partial.tax || {}) }
+    tax: { ...DEFAULT_SETTINGS.tax, ...(partial.tax || {}) },
+    restCycle: { ...DEFAULT_SETTINGS.restCycle, ...(partial.restCycle || {}) }
   };
 }
 
@@ -474,10 +491,8 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
   });
   const existingDayTotal = sameDateEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
   const existingMonthTotal = sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).totalHours, 0);
-  const existingMonthOvertime = sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).overtimeHours, 0);
   const dailyTotal = round2(existingDayTotal + normalized.totalHours);
   const monthlyTotal = round2(existingMonthTotal + normalized.totalHours);
-  const monthlyOvertime = round2(existingMonthOvertime + normalized.overtimeHours);
 
   if (!isValidDateString(date)) errors.push("请选择有效日期");
   if (![RECORD_MODES.TIME, RECORD_MODES.HOURS].includes(recordMode)) errors.push("请选择正确的记录方式");
@@ -516,18 +531,6 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
   if (dailyTotal > WORK_LIMITS.maxDayHours) {
     errors.push(`当天合计不能超过 ${WORK_LIMITS.maxDayHours} 小时，当前将达到 ${dailyTotal} 小时`);
   }
-  if (normalized.dayType === "workday" && normalized.overtimeHours > LEGAL_RULES.dailyOvertimeSoftLimit) {
-    warnings.push(`工作日延长工时超过 ${LEGAL_RULES.dailyOvertimeSoftLimit} 小时，应确认已协商审批`);
-  }
-  if (normalized.dayType === "workday" && normalized.overtimeHours > LEGAL_RULES.dailyOvertimeHardLimit) {
-    warnings.push(`工作日延长工时超过 ${LEGAL_RULES.dailyOvertimeHardLimit} 小时，存在合规风险`);
-  }
-  if (monthlyOvertime > LEGAL_RULES.monthlyOvertimeLimit) {
-    warnings.push(`本月加班将达到 ${monthlyOvertime} 小时，超过 ${LEGAL_RULES.monthlyOvertimeLimit} 小时合规警戒线`);
-  }
-  if (monthlyTotal > WORK_LIMITS.maxMonthlyHours) {
-    warnings.push(`本月工时将达到 ${monthlyTotal} 小时，请确认排班是否真实`);
-  }
 
   return {
     valid: errors.length === 0,
@@ -536,32 +539,20 @@ export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingE
     normalized,
     dailyTotal,
     monthlyTotal,
-    monthlyOvertime
+    monthlyOvertime: round2(sameMonthEntries.reduce((sum, item) => sum + normalizeEntry(item, merged).overtimeHours, 0) + normalized.overtimeHours)
   };
 }
 
 export function overtimeMultiplierForDay(dayType, settings = DEFAULT_SETTINGS) {
   const merged = mergeSettings(settings);
-  if (dayType === "holiday") return Math.max(
-    LEGAL_RULES.holidayOvertimeMultiplier,
-    clampNumber(merged.holidayMultiplier, 0)
-  );
-  if (dayType === "restday") return Math.max(
-    LEGAL_RULES.restDayOvertimeMultiplier,
-    clampNumber(merged.restDayMultiplier, 0)
-  );
-  return Math.max(
-    LEGAL_RULES.workdayOvertimeMultiplier,
-    clampNumber(merged.overtimeMultiplier, 0)
-  );
+  if (dayType === "holiday") return clampNumber(merged.holidayMultiplier, 0, LEGAL_RULES.holidayOvertimeMultiplier);
+  if (dayType === "restday") return clampNumber(merged.restDayMultiplier, 0, LEGAL_RULES.restDayOvertimeMultiplier);
+  return clampNumber(merged.overtimeMultiplier, 0, LEGAL_RULES.workdayOvertimeMultiplier);
 }
 
 export function comprehensiveOvertimeMultiplier(settings = DEFAULT_SETTINGS) {
   const merged = mergeSettings(settings);
-  return Math.max(
-    LEGAL_RULES.workdayOvertimeMultiplier,
-    clampNumber(merged.comprehensiveOvertimeMultiplier, 0)
-  );
+  return clampNumber(merged.comprehensiveOvertimeMultiplier, 0, LEGAL_RULES.workdayOvertimeMultiplier);
 }
 
 export function calculateEntryPay(entry = {}, settings = DEFAULT_SETTINGS) {
@@ -569,6 +560,8 @@ export function calculateEntryPay(entry = {}, settings = DEFAULT_SETTINGS) {
   const insights = deriveSalaryInsights(merged);
   const normalized = normalizeEntry(entry, merged);
   const mode = merged.salaryMode;
+  const leavePay = calculateLeavePay(normalized, merged, insights);
+  if (leavePay) return leavePay;
 
   if (mode === SALARY_MODES.HOURLY) {
     const hourlyRate = insights.rates.hourlyRate;
@@ -643,7 +636,15 @@ export function calculateMonthlyPayroll(entries = [], adjustments = [], settings
 
   if (merged.salaryMode === SALARY_MODES.BASE_OVERTIME) {
     basePay = merged.baseSalary;
-    overtimePay = monthEntries.reduce((sum, entry) => sum + calculateEntryPay(entry, merged).overtimePay, 0);
+    const pay = monthEntries.reduce((sum, entry) => {
+      const entryPay = calculateEntryPay(entry, merged);
+      return {
+        regularPay: sum.regularPay + entryPay.regularPay,
+        overtimePay: sum.overtimePay + entryPay.overtimePay
+      };
+    }, { regularPay: 0, overtimePay: 0 });
+    regularPay = pay.regularPay;
+    overtimePay = pay.overtimePay;
   } else if (merged.salaryMode === SALARY_MODES.COMPREHENSIVE) {
     const targetHours = clampNumber(merged.comprehensiveTargetHours, 0);
     const hourlyRate = deriveSalaryInsights(merged).rates.comprehensiveHourlyRate;
@@ -729,16 +730,6 @@ export function calculateComplianceSummary(entries = [], settings = DEFAULT_SETT
     .map(([week, hours]) => ({ week, hours }));
   const warnings = [];
 
-  if (monthlyOvertimeHours > LEGAL_RULES.monthlyOvertimeLimit) {
-    warnings.push(`本月加班 ${monthlyOvertimeHours}h，超过 ${LEGAL_RULES.monthlyOvertimeLimit}h 警戒线`);
-  }
-  if (dailyHardOvertimeDays.length) {
-    warnings.push(`${dailyHardOvertimeDays.length} 天工作日加班超过 ${LEGAL_RULES.dailyOvertimeHardLimit}h`);
-  }
-  if (weeklyOverLimit.length) {
-    warnings.push(`${weeklyOverLimit.length} 周总工时超过 ${LEGAL_RULES.weeklyStandardHours}h`);
-  }
-
   return {
     monthlyOvertimeHours,
     dailySoftOvertimeDays,
@@ -767,13 +758,18 @@ export function calculateAnnualTax(taxableIncome) {
 
 export function monthlyDeductionForGross(gross, settings = DEFAULT_SETTINGS) {
   const tax = mergeSettings(settings).tax;
-  const percent = clampNumber(tax.deductionPercent, 0) + clampNumber(tax.socialSecurityPercent, 0);
+  const grossAmount = clampNumber(gross, 0);
+  const otherDeduction = tax.otherDeductionMode === "percent"
+    ? grossAmount * clampNumber(tax.deductionPercent, 0) / 100
+    : clampNumber(tax.fixedDeductionMonthly, 0);
+  const socialSecurity = tax.socialSecurityMode === "percent"
+    ? grossAmount * clampNumber(tax.socialSecurityPercent, 0) / 100
+    : clampNumber(tax.socialSecurityFixedMonthly, 0);
   return round2(
     clampNumber(tax.standardDeductionMonthly, 0)
-    + clampNumber(tax.fixedDeductionMonthly, 0)
     + clampNumber(tax.specialAdditionalDeductionMonthly, 0)
-    + clampNumber(tax.socialSecurityFixedMonthly, 0)
-    + clampNumber(gross, 0) * percent / 100
+    + otherDeduction
+    + socialSecurity
   );
 }
 
@@ -828,7 +824,7 @@ export function summarizeYear(entries = [], adjustments = [], settings = DEFAULT
 
 export function buildCalendarDays(year, monthIndex) {
   const first = new Date(year, monthIndex, 1);
-  const startDay = first.getDay();
+  const startDay = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
   const previousMonthDays = new Date(year, monthIndex, 0).getDate();
   const cells = [];
@@ -876,4 +872,128 @@ function weekKeyFromDate(value) {
   const weekday = date.getDay() || 7;
   date.setDate(date.getDate() - weekday + 1);
   return formatDate(date);
+}
+
+function calculateLeavePay(entry = {}, settings = DEFAULT_SETTINGS, insights = deriveSalaryInsights(settings)) {
+  if (entry.source !== "leave-note" || !entry.leavePayMode) return null;
+  const mode = entry.leavePayMode;
+  const multiplier = mode === "unpaid" ? 0 : clampNumber(entry.leavePayMultiplier, 0, 1);
+  const deduction = mode === "deduct" ? clampNumber(entry.leaveDeductionAmount, 0) : 0;
+  const hours = clampNumber(entry.leaveHours, 0, settings.normalHoursPerDay || DEFAULT_SETTINGS.normalHoursPerDay);
+  let hourlyRate = insights.regularHourlyRate;
+  if (settings.salaryMode === SALARY_MODES.HOURLY) hourlyRate = insights.rates.hourlyRate;
+  if (settings.salaryMode === SALARY_MODES.COMPREHENSIVE) hourlyRate = insights.rates.comprehensiveHourlyRate;
+  const grossLeavePay = settings.salaryMode === SALARY_MODES.BASE_OVERTIME
+    ? 0
+    : hours * hourlyRate * multiplier;
+  const regularPay = round2(grossLeavePay - deduction);
+  return {
+    regularPay,
+    overtimePay: 0,
+    totalPay: regularPay
+  };
+}
+
+export function calculateRestReminder(date, settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  const dateText = isValidDateString(String(date || "")) ? String(date) : formatDate(new Date());
+  const config = merged.restCycle || DEFAULT_SETTINGS.restCycle;
+  if (config.mode === REST_CYCLE_MODES.WORKWEEK) return workweekRestReminder(dateText, merged);
+
+  const cycle = restCycleConfig(config);
+  if (!isValidDateString(config.lastRestDate || "")) {
+    return {
+      mode: config.mode,
+      label: cycle.label,
+      requiresAnchor: true,
+      isRestDue: false,
+      daysUntilRest: null,
+      nextRestDate: "",
+      detail: "设置上一次休息日后开始倒计时"
+    };
+  }
+
+  const days = daysBetween(config.lastRestDate, dateText);
+  if (days === 0) {
+    return {
+      mode: config.mode,
+      label: cycle.label,
+      requiresAnchor: false,
+      isRestDue: true,
+      daysUntilRest: 0,
+      nextRestDate: dateText,
+      detail: "今天就是记录里的休息日"
+    };
+  }
+
+  const cycleLength = cycle.workDays + cycle.restDays;
+  const position = positiveModulo(days - 1, cycleLength);
+  const isRestDue = position >= cycle.workDays;
+  const daysUntilRest = isRestDue ? 0 : cycle.workDays - position;
+  const nextRestDate = addDays(dateText, daysUntilRest);
+  return {
+    mode: config.mode,
+    label: cycle.label,
+    requiresAnchor: false,
+    isRestDue,
+    daysUntilRest,
+    nextRestDate,
+    detail: isRestDue ? "今天建议安排休息" : `距离建议休息还有 ${daysUntilRest} 天`
+  };
+}
+
+function restCycleConfig(config = DEFAULT_SETTINGS.restCycle) {
+  if (config.mode === REST_CYCLE_MODES.WORK_6_REST_1) {
+    return { label: "上六休一", workDays: 6, restDays: 1 };
+  }
+  if (config.mode === REST_CYCLE_MODES.WORK_14_REST_1) {
+    return { label: "上十四休一", workDays: 14, restDays: 1 };
+  }
+  return {
+    label: "自定义",
+    workDays: Math.max(1, Math.round(clampNumber(config.workDays, 1, 5))),
+    restDays: Math.max(1, Math.round(clampNumber(config.restDays, 1, 1)))
+  };
+}
+
+function workweekRestReminder(date, settings) {
+  for (let offset = 0; offset <= 14; offset += 1) {
+    const dateText = addDays(date, offset);
+    if (inferDayType(dateText, settings) !== "workday") {
+      return {
+        mode: REST_CYCLE_MODES.WORKWEEK,
+        label: "按每周休息日",
+        requiresAnchor: false,
+        isRestDue: offset === 0,
+        daysUntilRest: offset,
+        nextRestDate: dateText,
+        detail: offset === 0 ? "今天是休息日" : `距离休息日还有 ${offset} 天`
+      };
+    }
+  }
+  return {
+    mode: REST_CYCLE_MODES.WORKWEEK,
+    label: "按每周休息日",
+    requiresAnchor: false,
+    isRestDue: false,
+    daysUntilRest: null,
+    nextRestDate: "",
+    detail: "未来两周没有找到休息日"
+  };
+}
+
+function addDays(date, days) {
+  const parsed = new Date(`${date}T00:00:00`);
+  parsed.setDate(parsed.getDate() + days);
+  return formatDate(parsed);
+}
+
+function daysBetween(start, end) {
+  const left = new Date(`${start}T00:00:00`);
+  const right = new Date(`${end}T00:00:00`);
+  return Math.floor((right - left) / 86400000);
+}
+
+function positiveModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
 }
