@@ -196,6 +196,12 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
+  if (action === "skip-setup") {
+    state.settings._wizardDone = true;
+    persist();
+    render();
+  }
+
   if (action === "clear-edit") {
     ui.editingEntryId = "";
     ui.entryAdvanced = false;
@@ -268,6 +274,7 @@ document.addEventListener("submit", (event) => {
   if (formId === "adjustment-form") saveAdjustment(form);
   if (formId === "bulk-form") bulkApply(form, event.submitter?.value);
   if (formId === "settings-form") saveSettings(form);
+  if (formId === "setup-form") saveSetupWizard(form);
 });
 
 document.addEventListener("input", (event) => {
@@ -316,6 +323,12 @@ document.addEventListener("change", async (event) => {
     return;
   }
 
+  if (event.target.name === "salaryMode" && event.target.closest("#setup-form")) {
+    ui.setupSalaryMode = event.target.value;
+    render();
+    return;
+  }
+
   if (event.target.id === "import-file" && event.target.files?.[0]) {
     try {
       const text = await event.target.files[0].text();
@@ -346,6 +359,10 @@ if ("serviceWorker" in navigator) {
 
 function render() {
   state.settings = limitSettings(state.settings);
+  if (shouldShowSetupWizard()) {
+    app.innerHTML = renderSetupWizard();
+    return;
+  }
   app.innerHTML = `
     <div class="shell">
       ${renderSidebar()}
@@ -362,6 +379,77 @@ function render() {
     </div>
   `;
   updateEntryPreview();
+}
+
+function shouldShowSetupWizard() {
+  return state.entries.length === 0
+    && state.settings.baseSalary === DEFAULT_SETTINGS.baseSalary
+    && state.settings.regularHourlyRate === 0
+    && state.settings.hourlyRate === DEFAULT_SETTINGS.hourlyRate
+    && !state.settings._wizardDone;
+}
+
+function renderSetupWizard() {
+  const salaryMode = ui.setupSalaryMode || SALARY_MODES.REGULAR_OVERTIME;
+  const modeFields = settingsFieldsForMode(salaryMode);
+  return `
+    <div class="setup-wizard">
+      <div class="setup-wizard-card">
+        <div class="setup-wizard-header">
+          <img src="./assets/icon.svg" alt="" width="56" height="56">
+          <h1>欢迎使用明薪工时</h1>
+          <p>花 1 分钟设置你的薪资规则，之后每天记工时就很快了。</p>
+        </div>
+        <form id="setup-form" class="setup-wizard-form">
+          <div class="setup-step">
+            <h2>1. 选择薪资方式</h2>
+            <p class="setup-hint">选最接近你工资结算的方式</p>
+            <div class="setup-choice-grid">
+              ${setupChoiceButton("salaryMode", SALARY_MODES.REGULAR_OVERTIME, "正班+加班", "按小时算正班和加班工资", salaryMode)}
+              ${setupChoiceButton("salaryMode", SALARY_MODES.BASE_OVERTIME, "底薪+加班", "底薪固定，加班另算", salaryMode)}
+              ${setupChoiceButton("salaryMode", SALARY_MODES.COMPREHENSIVE, "综合工时制", "按月总工时计算", salaryMode)}
+              ${setupChoiceButton("salaryMode", SALARY_MODES.HOURLY, "小时计算", "纯按小时计薪", salaryMode)}
+            </div>
+          </div>
+
+          <div class="setup-step">
+            <h2>2. 填写基本薪资</h2>
+            <p class="setup-hint">这些数字可以随时在设置里改</p>
+            <div class="form-grid">
+              ${modeFields.includes("baseSalary") ? numberField("月薪（底薪）", "baseSalary", 6000, 100) : ""}
+              ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", 174, 1) : ""}
+              ${modeFields.includes("hourlyRate") ? numberField("时薪", "hourlyRate", 0, 1) : ""}
+            </div>
+          </div>
+
+          <div class="setup-step">
+            <h2>3. 确认班次</h2>
+            <p class="setup-hint">你的默认上下班时间</p>
+            <div class="form-grid">
+              ${field("上班时间", `<input name="startTime" type="time" value="09:00" required>`)}
+              ${field("下班时间", `<input name="endTime" type="time" value="18:00" required>`)}
+              ${field("午休（分钟）", `<input name="breakMinutes" type="number" min="0" max="120" step="1" value="60">`)}
+            </div>
+          </div>
+
+          <div class="setup-footer">
+            <button class="plain-button" type="button" data-action="skip-setup">稍后设置</button>
+            <button class="primary-button" type="submit">开始使用</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function setupChoiceButton(name, value, title, detail, current) {
+  return `
+    <label class="setup-choice ${current === value ? "is-active" : ""}">
+      <input type="radio" name="${name}" value="${value}" ${current === value ? "checked" : ""}>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </label>
+  `;
 }
 
 function renderSidebar() {
@@ -1111,86 +1199,154 @@ function renderSettingsView() {
             </div>
             <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪，也可以手动填写。`}</p>
           </div>
-          ${field("薪资方式", `
-            <select name="salaryMode">
-              ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
-              ${option(SALARY_MODES.BASE_OVERTIME, MODE_LABELS[SALARY_MODES.BASE_OVERTIME], settings.salaryMode)}
-              ${option(SALARY_MODES.COMPREHENSIVE, MODE_LABELS[SALARY_MODES.COMPREHENSIVE], settings.salaryMode)}
-              ${option(SALARY_MODES.HOURLY, MODE_LABELS[SALARY_MODES.HOURLY], settings.salaryMode)}
-            </select>
-          `)}
-          <div class="form-grid">
-            ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
-            ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
-            ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-            ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
-            ${modeFields.includes("hourlyRate") ? numberField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate, 0.01) : ""}
-            ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
-            ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
-            ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-          </div>
-          <div class="form-grid">
-            ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
-            ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
-            ${numberField("节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
-            ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
-          </div>
-          <h3>目标</h3>
-          <div class="form-grid">
-            ${numberField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome, 0.01)}
-            ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
-          </div>
-          <h3>班次</h3>
-          ${field("默认班次", `
-            <select name="defaultPresetId">
-              ${settings.shiftPresets.map((preset) => option(preset.id, preset.name, settings.defaultPresetId)).join("")}
-            </select>
-          `)}
-          <div class="preset-editor">
-            ${settings.shiftPresets.map((preset, index) => renderPresetEditor(preset, index)).join("")}
-          </div>
-          <h3>工作日与自动补扣</h3>
-          <div class="workweek-grid">
-            ${WEEKDAY_ORDER.map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), weekLabelByIndex(weekday), settings.workweek.includes(weekday))).join("")}
-          </div>
-          ${renderHolidayRuleCard()}
-          <h3>放假提醒</h3>
-          ${renderRestCycleSettings(settings)}
-          <label class="check-row">
-            <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
-            <span>保存工时时自动添加日补扣</span>
-          </label>
-          <div class="form-grid">
-            ${numberField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount, 0.01)}
-            ${field("补扣类型", `<select name="autoAdjustment.type">${option("allowance", "补贴", settings.autoAdjustment.type)}${option("deduction", "扣款", settings.autoAdjustment.type)}</select>`)}
-            ${field("补扣分类", `<input name="autoAdjustment.category" type="text" maxlength="30" value="${escapeAttr(settings.autoAdjustment.category)}">`)}
-            ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
-          </div>
-          <h3>个税</h3>
-          <div class="tax-note">
-            <strong>累计预扣法</strong>
-            <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
-          </div>
-          <div class="form-grid">
-            ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
-            ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
-            ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
-            ${numberFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01, {}, "tax-other-fixed")}
-            ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
-            ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
-            ${numberFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01, {}, "tax-social-fixed")}
-            ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
-          </div>
-          <div class="form-footer">
-            <label class="file-button">
-              导入
-              <input id="import-file" type="file" accept="application/json,.json">
-            </label>
-            <div class="button-row">
-              <button class="plain-button" type="button" data-action="backup">备份</button>
-              <button class="primary-button" type="submit">保存设置</button>
+
+          <details class="settings-group" open>
+            <summary class="settings-group-title">
+              <span>薪资方式与时薪</span>
+              <small>${MODE_LABELS[settings.salaryMode]}</small>
+            </summary>
+            <div class="settings-group-body">
+              ${field("薪资方式", `
+                <select name="salaryMode">
+                  ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
+                  ${option(SALARY_MODES.BASE_OVERTIME, MODE_LABELS[SALARY_MODES.BASE_OVERTIME], settings.salaryMode)}
+                  ${option(SALARY_MODES.COMPREHENSIVE, MODE_LABELS[SALARY_MODES.COMPREHENSIVE], settings.salaryMode)}
+                  ${option(SALARY_MODES.HOURLY, MODE_LABELS[SALARY_MODES.HOURLY], settings.salaryMode)}
+                </select>
+              `)}
+              <div class="form-grid">
+                ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
+                ${modeFields.includes("baseSalary") ? numberField("底薪", "baseSalary", settings.baseSalary, 0.01) : ""}
+                ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+                ${modeFields.includes("regularHourlyRate") ? numberField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate, 0.01) : ""}
+                ${modeFields.includes("hourlyRate") ? numberField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate, 0.01) : ""}
+                ${modeFields.includes("baseOvertimeRate") ? numberField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate, 0.01) : ""}
+                ${modeFields.includes("comprehensiveHourlyRate") ? numberField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate, 0.01) : ""}
+                ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+              </div>
             </div>
-          </div>
+          </details>
+
+          <details class="settings-group" open>
+            <summary class="settings-group-title">
+              <span>加班倍率</span>
+              <small>工作日 ${settings.overtimeMultiplier}x / 休息日 ${settings.restDayMultiplier}x / 节假日 ${settings.holidayMultiplier}x</small>
+            </summary>
+            <div class="settings-group-body">
+              <div class="form-grid">
+                ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
+                ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
+                ${numberField("节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
+                ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>目标</span>
+              <small>月收入 ${money(settings.goals.monthlyIncome)} / 月工时 ${settings.goals.monthlyHours}h</small>
+            </summary>
+            <div class="settings-group-body">
+              <div class="form-grid">
+                ${numberField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome, 0.01)}
+                ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>班次管理</span>
+              <small>${settings.shiftPresets.length} 个班次模板</small>
+            </summary>
+            <div class="settings-group-body">
+              ${field("默认班次", `
+                <select name="defaultPresetId">
+                  ${settings.shiftPresets.map((preset) => option(preset.id, preset.name, settings.defaultPresetId)).join("")}
+                </select>
+              `)}
+              <div class="preset-editor">
+                ${settings.shiftPresets.map((preset, index) => renderPresetEditor(preset, index)).join("")}
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>工作日与假期</span>
+              <small>${settings.workweek.map((d) => weekLabelByIndex(d)).join("")} 休息</small>
+            </summary>
+            <div class="settings-group-body">
+              <div class="workweek-grid">
+                ${WEEKDAY_ORDER.map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), weekLabelByIndex(weekday), settings.workweek.includes(weekday))).join("")}
+              </div>
+              ${renderHolidayRuleCard()}
+              <h3>放假提醒</h3>
+              ${renderRestCycleSettings(settings)}
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>自动补扣</span>
+              <small>${settings.autoAdjustment.enabled ? `已开启 ${money(settings.autoAdjustment.amount)}/天` : "未开启"}</small>
+            </summary>
+            <div class="settings-group-body">
+              <label class="check-row">
+                <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
+                <span>保存工时时自动添加日补扣</span>
+              </label>
+              <div class="form-grid">
+                ${numberField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount, 0.01)}
+                ${field("补扣类型", `<select name="autoAdjustment.type">${option("allowance", "补贴", settings.autoAdjustment.type)}${option("deduction", "扣款", settings.autoAdjustment.type)}</select>`)}
+                ${field("补扣分类", `<input name="autoAdjustment.category" type="text" maxlength="30" value="${escapeAttr(settings.autoAdjustment.category)}">`)}
+                ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>个税设置</span>
+              <small>累计预扣法</small>
+            </summary>
+            <div class="settings-group-body">
+              <div class="tax-note">
+                <strong>累计预扣法</strong>
+                <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
+              </div>
+              <div class="form-grid">
+                ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
+                ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
+                ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
+                ${numberFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01, {}, "tax-other-fixed")}
+                ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
+                ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
+                ${numberFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01, {}, "tax-social-fixed")}
+                ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
+              </div>
+            </div>
+          </details>
+
+          <details class="settings-group">
+            <summary class="settings-group-title">
+              <span>数据管理</span>
+              <small>备份与导入</small>
+            </summary>
+            <div class="settings-group-body">
+              <div class="form-footer">
+                <label class="file-button">
+                  导入
+                  <input id="import-file" type="file" accept="application/json,.json">
+                </label>
+                <div class="button-row">
+                  <button class="plain-button" type="button" data-action="backup">备份</button>
+                  <button class="primary-button" type="submit">保存设置</button>
+                </div>
+              </div>
+            </div>
+          </details>
         </form>
       </section>
     </div>
@@ -1410,6 +1566,31 @@ function saveSettings(form) {
   }
   state.settings = limitSettings(next);
   persist("已保存设置");
+  render();
+}
+
+function saveSetupWizard(form) {
+  const data = Object.fromEntries(new FormData(form));
+  const salaryMode = data.salaryMode || SALARY_MODES.REGULAR_OVERTIME;
+  const settings = mergeSettings(state.settings);
+  settings.salaryMode = salaryMode;
+  settings.baseSalary = Number(data.baseSalary || 0);
+  settings.standardMonthlyHours = Number(data.standardMonthlyHours || 174);
+  settings.hourlyRate = Number(data.hourlyRate || 0);
+  settings._wizardDone = true;
+
+  // Update default shift preset
+  const startTime = data.startTime || "09:00";
+  const endTime = data.endTime || "18:00";
+  const breakMinutes = Number(data.breakMinutes || 60);
+  if (settings.shiftPresets.length > 0) {
+    settings.shiftPresets[0].startTime = startTime;
+    settings.shiftPresets[0].endTime = endTime;
+    settings.shiftPresets[0].breakMinutes = breakMinutes;
+  }
+
+  state.settings = limitSettings(settings);
+  persist("设置完成，开始记录工时吧");
   render();
 }
 

@@ -497,3 +497,228 @@ test("rest reminders support non-weekend shift cycles", () => {
   assert.equal(restDay.isRestDue, true);
   assert.equal(restDay.daysUntilRest, 0);
 });
+
+test("leave pay calculations for different leave types", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    regularHourlyRate: 50
+  });
+
+  // Annual leave - full pay
+  const annualLeave = calculateEntryPay({
+    date: "2026-05-07",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "leave-note",
+    leaveType: "annual",
+    leavePayMode: "paid",
+    leavePayMultiplier: 1,
+    leaveHours: 8
+  }, settings);
+  assert.equal(annualLeave.totalPay, 400);
+
+  // Personal leave - unpaid
+  const personalLeave = calculateEntryPay({
+    date: "2026-05-08",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "leave-note",
+    leaveType: "personal",
+    leavePayMode: "unpaid",
+    leavePayMultiplier: 0,
+    leaveHours: 8
+  }, settings);
+  assert.equal(personalLeave.totalPay, 0);
+
+  // Sick leave - 80% pay
+  const sickLeave = calculateEntryPay({
+    date: "2026-05-09",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "leave-note",
+    leaveType: "sick",
+    leavePayMode: "custom",
+    leavePayMultiplier: 0.8,
+    leaveHours: 8
+  }, settings);
+  assert.equal(sickLeave.totalPay, 320);
+
+  // Half day leave
+  const halfDayLeave = calculateEntryPay({
+    date: "2026-05-10",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 0,
+    overtimeHours: 0,
+    totalHours: 0,
+    source: "leave-note",
+    leaveType: "annual",
+    leavePayMode: "paid",
+    leavePayMultiplier: 1,
+    leaveHours: 4
+  }, settings);
+  assert.equal(halfDayLeave.totalPay, 200);
+});
+
+test("monthly payroll with mixed work and leave entries", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    regularHourlyRate: 40,
+    overtimeMultiplier: 1.5,
+    restDayMultiplier: 2
+  });
+
+  const entries = [
+    // Normal workday - 10 hours
+    { date: "2026-05-04", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 8, overtimeHours: 2, totalHours: 10 },
+    // Rest day work - 6 hours
+    { date: "2026-05-03", recordMode: RECORD_MODES.HOURS, dayType: "restday", regularHours: 0, overtimeHours: 6, totalHours: 6 },
+    // Annual leave - full day
+    { date: "2026-05-05", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 0, overtimeHours: 0, totalHours: 0, source: "leave-note", leavePayMode: "paid", leavePayMultiplier: 1, leaveHours: 8 },
+    // Personal leave - unpaid
+    { date: "2026-05-06", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 0, overtimeHours: 0, totalHours: 0, source: "leave-note", leavePayMode: "unpaid", leavePayMultiplier: 0, leaveHours: 8 }
+  ];
+
+  const payroll = calculateMonthlyPayroll(entries, [], settings, 2026, 4);
+  // Day 1: 8*40 + 2*40*1.5 = 320 + 120 = 440
+  // Day 2: 6*40*2 = 480
+  // Day 3: 8*40 = 320 (annual leave at regular rate)
+  // Day 4: 0
+  assert.equal(payroll.regularPay, 640); // 320 (workday) + 320 (leave)
+  assert.equal(payroll.overtimePay, 600); // 120 (workday OT) + 480 (restday)
+  assert.equal(payroll.grossBeforeTax, 1240);
+});
+
+test("overtime edge cases - maximum legal overtime", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    regularHourlyRate: 30,
+    overtimeMultiplier: 1.5,
+    restDayMultiplier: 2,
+    holidayMultiplier: 3
+  });
+
+  // Workday with max overtime (3 hours legal limit, but we allow up to 12 in validation)
+  const maxOvertime = calculateEntryPay({
+    date: "2026-05-06",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 4,
+    totalHours: 12
+  }, settings);
+  assert.equal(maxOvertime.regularPay, 240);
+  assert.equal(maxOvertime.overtimePay, 180);
+  assert.equal(maxOvertime.totalPay, 420);
+
+  // Holiday work - all overtime at 3x
+  const holidayWork = calculateEntryPay({
+    date: "2026-05-01",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "holiday",
+    regularHours: 0,
+    overtimeHours: 8,
+    totalHours: 8
+  }, settings);
+  assert.equal(holidayWork.regularPay, 0);
+  assert.equal(holidayWork.overtimePay, 720);
+  assert.equal(holidayWork.totalPay, 720);
+});
+
+test("tax calculation with percent-based deductions", () => {
+  const settings = mergeSettings({
+    tax: {
+      standardDeductionMonthly: 5000,
+      otherDeductionMode: "percent",
+      deductionPercent: 10,
+      socialSecurityMode: "percent",
+      socialSecurityPercent: 5,
+      specialAdditionalDeductionMonthly: 1000
+    }
+  });
+
+  // Monthly income 15000
+  // Taxable = 15000 - 5000 - 1500 (10%) - 750 (5%) - 1000 = 6750
+  const tax = calculateCumulativeTaxForMonth([15000], settings, 0);
+  assert.equal(tax.taxableIncome, 6750);
+  assert.equal(tax.currentTax, 202.5); // 6750 * 0.03
+});
+
+test("comprehensive mode with multiple months", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.COMPREHENSIVE,
+    comprehensiveHourlyRate: 35,
+    comprehensiveTargetHours: 160,
+    comprehensiveOvertimeMultiplier: 1.5,
+    holidayMultiplier: 3
+  });
+
+  // Month 1: 170 hours (10 overtime)
+  const month1 = calculateMonthlyPayroll([
+    { date: "2026-01-15", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 160, overtimeHours: 10, totalHours: 170 }
+  ], [], settings, 2026, 0);
+  assert.equal(month1.regularPay, 5600); // 160 * 35
+  assert.equal(month1.overtimePay, 525); // 10 * 35 * 1.5
+
+  // Month 2: 150 hours (under target)
+  const month2 = calculateMonthlyPayroll([
+    { date: "2026-02-15", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 150, overtimeHours: 0, totalHours: 150 }
+  ], [], settings, 2026, 1);
+  assert.equal(month2.regularPay, 5250); // 150 * 35
+  assert.equal(month2.overtimePay, 0);
+});
+
+test("hourly mode with mixed day types", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.HOURLY,
+    hourlyRate: 25,
+    overtimeMultiplier: 1.5,
+    restDayMultiplier: 2,
+    holidayMultiplier: 3
+  });
+
+  // Workday - regular hours
+  const workday = calculateEntryPay({
+    date: "2026-05-06",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 0,
+    totalHours: 8
+  }, settings);
+  assert.equal(workday.regularPay, 200);
+  assert.equal(workday.overtimePay, 0);
+
+  // Workday - with overtime
+  const workdayOT = calculateEntryPay({
+    date: "2026-05-07",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "workday",
+    regularHours: 8,
+    overtimeHours: 2,
+    totalHours: 10
+  }, settings);
+  assert.equal(workdayOT.regularPay, 200);
+  assert.equal(workdayOT.overtimePay, 75); // 2 * 25 * 1.5
+
+  // Rest day - all overtime at 2x
+  const restday = calculateEntryPay({
+    date: "2026-05-03",
+    recordMode: RECORD_MODES.HOURS,
+    dayType: "restday",
+    regularHours: 0,
+    overtimeHours: 6,
+    totalHours: 6
+  }, settings);
+  assert.equal(restday.regularPay, 0);
+  assert.equal(restday.overtimePay, 300); // 6 * 25 * 2
+});
