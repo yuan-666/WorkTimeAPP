@@ -1,4 +1,4 @@
-const CACHE_NAME = "worktimeapp-v11";
+const CACHE_NAME = "worktimeapp-v12";
 const ASSETS = [
   "./",
   "./index.html",

@@ -51,7 +51,10 @@ let ui = {
   entryError: "",
   bulkMode: "add",
   notice: "",
-  lastDeleted: null
+  lastDeleted: null,
+  recordsSearch: "",
+  recordsDateFrom: "",
+  recordsDateTo: ""
 };
 const repairedOnLoad = repairRepeatedEntries();
 if (repairedOnLoad) {
@@ -288,6 +291,23 @@ document.addEventListener("input", (event) => {
     updateEntryPreview();
   }
   if (event.target.closest("#bulk-form")) updateBulkPreview();
+
+  // Records filter
+  if (event.target.dataset.filter === "search") {
+    ui.recordsSearch = event.target.value;
+    render();
+    return;
+  }
+  if (event.target.dataset.filter === "date-from") {
+    ui.recordsDateFrom = event.target.value;
+    render();
+    return;
+  }
+  if (event.target.dataset.filter === "date-to") {
+    ui.recordsDateTo = event.target.value;
+    render();
+    return;
+  }
 });
 
 document.addEventListener("change", async (event) => {
@@ -588,7 +608,7 @@ function renderCalendarView() {
           ${WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}
         </div>
         <div class="calendar-grid">
-          ${days.map((day) => renderDayCell(day, entriesByDate.get(day.date) || [], adjustmentsByDate.get(day.date) || [])).join("")}
+          ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
         </div>
       </section>
       <section class="detail-panel" aria-label="每日记录">
@@ -651,6 +671,35 @@ function renderRestReminderCard(date) {
       <strong>${escapeHtml(text)}</strong>
     </div>
   `;
+}
+
+function renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate) {
+  let html = "";
+  let currentWeek = -1;
+  let weekHours = 0;
+  let weekPay = 0;
+  for (let i = 0; i < days.length; i++) {
+    const day = days[i];
+    const weekNum = Math.floor(i / 7);
+    if (weekNum !== currentWeek) {
+      if (currentWeek >= 0) {
+        html += `<div class="week-summary-row"><span>周合计</span><strong>${round2(weekHours)}h</strong><span>${money(weekPay)}</span></div>`;
+      }
+      currentWeek = weekNum;
+      weekHours = 0;
+      weekPay = 0;
+    }
+    const entries = entriesByDate.get(day.date) || [];
+    const adjustments = adjustmentsByDate.get(day.date) || [];
+    html += renderDayCell(day, entries, adjustments);
+    const normalized = entries.map((e) => normalizeEntry(e, state.settings));
+    weekHours += normalized.reduce((sum, e) => sum + e.totalHours, 0);
+    weekPay += entries.reduce((sum, e) => sum + calculateEntryPay(e, state.settings).totalPay, 0);
+  }
+  if (days.length > 0) {
+    html += `<div class="week-summary-row"><span>周合计</span><strong>${round2(weekHours)}h</strong><span>${money(weekPay)}</span></div>`;
+  }
+  return html;
 }
 
 function renderDayCell(day, entries, adjustments) {
@@ -998,12 +1047,45 @@ function renderAdjustmentItem(item) {
 }
 
 function renderRecordsView() {
-  const monthEntries = state.entries
-    .filter((entry) => entry.date?.startsWith(`${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}`))
+  const monthPrefix = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}`;
+  let monthEntries = state.entries
+    .filter((entry) => entry.date?.startsWith(monthPrefix))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const monthAdjustments = state.adjustments
-    .filter((item) => item.date?.startsWith(`${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}`))
+  let monthAdjustments = state.adjustments
+    .filter((item) => item.date?.startsWith(monthPrefix))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  // Apply search filter
+  const search = (ui.recordsSearch || "").trim().toLowerCase();
+  if (search) {
+    monthEntries = monthEntries.filter((entry) => {
+      const text = [
+        entry.date, entry.note, entry.target, entry.source,
+        LEAVE_TYPES[entry.leaveType], entry.startTime, entry.endTime
+      ].filter(Boolean).join(" ").toLowerCase();
+      return text.includes(search);
+    });
+    monthAdjustments = monthAdjustments.filter((item) => {
+      const text = [item.date, item.category, item.note, item.type]
+        .filter(Boolean).join(" ").toLowerCase();
+      return text.includes(search);
+    });
+  }
+
+  // Apply date range filter
+  const dateFrom = ui.recordsDateFrom || "";
+  const dateTo = ui.recordsDateTo || "";
+  if (dateFrom) {
+    monthEntries = monthEntries.filter((entry) => entry.date >= dateFrom);
+    monthAdjustments = monthAdjustments.filter((item) => item.date >= dateFrom);
+  }
+  if (dateTo) {
+    monthEntries = monthEntries.filter((entry) => entry.date <= dateTo);
+    monthAdjustments = monthAdjustments.filter((item) => item.date <= dateTo);
+  }
+
+  const totalCount = monthEntries.length + monthAdjustments.length;
+  const filtered = search || dateFrom || dateTo;
   return `
     <div class="workspace two-column">
       <section class="detail-panel" aria-label="批量处理">
@@ -1020,9 +1102,14 @@ function renderRecordsView() {
       <section class="detail-panel" aria-label="记录列表">
         <div class="panel-head">
           <div>
-            <p class="eyebrow">${monthEntries.length + monthAdjustments.length} 条</p>
+            <p class="eyebrow">${totalCount} 条${filtered ? "（已筛选）" : ""}</p>
             <h2>本月明细</h2>
           </div>
+        </div>
+        <div class="records-filter">
+          <input type="search" placeholder="搜索备注、日期、分类…" value="${escapeAttr(ui.recordsSearch || "")}" data-filter="search" aria-label="搜索记录">
+          <input type="date" value="${escapeAttr(dateFrom)}" data-filter="date-from" aria-label="开始日期" title="开始日期">
+          <input type="date" value="${escapeAttr(dateTo)}" data-filter="date-to" aria-label="结束日期" title="结束日期">
         </div>
         <div class="timeline">
           ${monthEntries.map((entry) => `<div><time>${entry.date}</time>${renderEntryItem(entry)}</div>`).join("") || `<p class="empty">暂无工时记录</p>`}
@@ -1172,6 +1259,8 @@ function renderReportsView() {
             <h2>薪资拆分</h2>
           </div>
         </div>
+        ${renderPieChart(selected)}
+        ${renderWeeklyTrend(yearSummary, ui.year, ui.monthIndex)}
         <div class="summary-list">
           ${summaryLine("出勤天数", `${selected.attendanceDays} 天`)}
           ${summaryLine("总工时", `${selected.totalHours} 小时`)}
@@ -1198,6 +1287,77 @@ function renderReportsView() {
           ${goal("工时目标", selected.totalHours, hoursGoal, `${selected.totalHours}h`, `${hoursGoal}h`)}
         </div>
       </section>
+    </div>
+  `;
+}
+
+
+function renderPieChart(selected) {
+  const segments = [
+    { label: "正班工资", value: Math.max(0, selected.regularPay), color: "#176b5b" },
+    { label: "加班工资", value: Math.max(0, selected.overtimePay), color: "#3fb68b" },
+    { label: "底薪", value: Math.max(0, selected.basePay), color: "#2d8f73" },
+    { label: "补贴", value: Math.max(0, selected.allowances), color: "#f0c85a" },
+    { label: "扣款", value: Math.max(0, selected.deductions), color: "#e5534b" },
+    { label: "个税", value: Math.max(0, selected.tax.currentTax), color: "#bf6f2f" }
+  ].filter((s) => s.value > 0);
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+  if (total <= 0) return "";
+  let accumulated = 0;
+  const stops = [];
+  for (const segment of segments) {
+    const start = accumulated / total * 360;
+    accumulated += segment.value;
+    const end = accumulated / total * 360;
+    stops.push(`${segment.color} ${start}deg ${end}deg`);
+  }
+  const gradient = `conic-gradient(${stops.join(", ")})`;
+  const legend = segments.map((s) => `
+    <div class="pie-legend-item">
+      <span class="pie-legend-dot" style="background:${s.color}"></span>
+      <span class="pie-legend-label">${escapeHtml(s.label)}</span>
+      <span class="pie-legend-value">${money(s.value)}</span>
+    </div>
+  `).join("");
+  return `
+    <div class="pie-chart-wrap">
+      <div class="pie-chart" style="background:${gradient}" aria-label="薪资构成饼图"></div>
+      <div class="pie-legend">${legend}</div>
+    </div>
+  `;
+}
+
+function renderWeeklyTrend(yearSummary, year, monthIndex) {
+  const entries = state.entries.filter((entry) => {
+    return entry.date?.startsWith(`${year}-${String(monthIndex + 1).padStart(2, "0")}`);
+  });
+  if (!entries.length) return "";
+  const weeks = new Map();
+  for (const entry of entries) {
+    const d = new Date(`${entry.date}T00:00:00`);
+    const weekStart = new Date(d);
+    weekStart.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const key = formatDate(weekStart);
+    if (!weeks.has(key)) weeks.set(key, { hours: 0, label: key.slice(5) });
+    weeks.get(key).hours += normalizeEntry(entry, state.settings).totalHours;
+  }
+  const weekData = [...weeks.values()].sort((a, b) => a.label.localeCompare(b.label));
+  if (!weekData.length) return "";
+  const maxHours = Math.max(1, ...weekData.map((w) => w.hours));
+  const bars = weekData.map((w) => {
+    const pct = Math.max(4, w.hours / maxHours * 100);
+    return `
+      <div class="weekly-bar-item">
+        <span class="weekly-bar-hours">${round2(w.hours)}h</span>
+        <div class="weekly-bar" style="height:${pct}%"></div>
+        <span class="weekly-bar-label">${w.label}</span>
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="weekly-trend">
+      <span class="weekly-trend-title">周工时趋势</span>
+      <div class="weekly-bars">${bars}</div>
     </div>
   `;
 }
