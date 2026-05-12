@@ -526,6 +526,33 @@ h3 {
   line-height: 1.25;
 }
 
+.shortcut-row,
+.bulk-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shortcut-row button,
+.bulk-mode-switch button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.shortcut-row button.is-active,
+.shortcut-row button:hover,
+.bulk-mode-switch button.is-active,
+.bulk-mode-switch button:hover {
+  border-color: var(--accent);
+  background: #f2faf7;
+  color: var(--accent);
+}
+
 .day-status {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -796,8 +823,10 @@ button:focus-visible {
 }
 
 output {
+  min-width: 0;
   font-weight: 800;
   color: var(--accent);
+  line-height: 1.35;
 }
 
 .form-error {
@@ -1015,6 +1044,11 @@ output {
   align-items: stretch;
 }
 
+.bulk-tool[data-bulk-mode="delete"] .bulk-summary {
+  border-color: rgba(180, 61, 66, 0.24);
+  background: #fff7f2;
+}
+
 .bulk-summary {
   display: grid;
   gap: 4px;
@@ -1042,6 +1076,22 @@ output {
 .confirm-delete {
   border-color: rgba(180, 61, 66, 0.24);
   background: #fff7f2;
+}
+
+.tool-form[data-leave-pay-mode="paid"] .leave-multiplier-field,
+.tool-form[data-leave-pay-mode="paid"] .leave-deduction-field,
+.tool-form[data-leave-pay-mode="unpaid"] .leave-multiplier-field,
+.tool-form[data-leave-pay-mode="unpaid"] .leave-deduction-field,
+.tool-form[data-leave-pay-mode="custom"] .leave-deduction-field,
+.tool-form[data-leave-pay-mode="deduct"] .leave-multiplier-field,
+#settings-form[data-tax-other-mode="fixed"] .tax-other-percent,
+#settings-form[data-tax-other-mode="percent"] .tax-other-fixed,
+#settings-form[data-tax-social-mode="fixed"] .tax-social-percent,
+#settings-form[data-tax-social-mode="percent"] .tax-social-fixed,
+#settings-form[data-rest-cycle-mode="workweek"] .rest-anchor-field,
+#settings-form[data-rest-cycle-mode="workweek"] .rest-custom-field,
+#settings-form:not([data-rest-cycle-mode="custom"]) .rest-custom-field {
+  display: none;
 }
 
 .preset-editor {
@@ -1249,8 +1299,19 @@ output {
   }
 
   .preset-grid,
-  .entry-choice-grid {
+  .entry-choice-grid,
+  .shortcut-row,
+  .bulk-mode-switch {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .form-footer-strong {
+    bottom: 74px;
+    align-items: stretch;
+  }
+
+  .form-footer-strong output {
+    font-size: 13px;
   }
 
   .preset-row {

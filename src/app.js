@@ -20,6 +20,7 @@ import {
   monthIndexFromDate,
   normalizeEntry,
   overtimeMultiplierForDay,
+  parseTimeToMinutes,
   round2,
   summarizeYear,
   validateEntry,
@@ -47,6 +48,7 @@ let ui = {
   entryAdvanced: false,
   entryIntent: "",
   entryError: "",
+  bulkMode: "add",
   notice: "",
   lastDeleted: null
 };
@@ -89,7 +91,7 @@ const LEAVE_TYPES = {
 render();
 
 document.addEventListener("click", async (event) => {
-  const target = event.target.closest("[data-action], [data-view], [data-date], [data-preset], [data-entry-intent], [data-delete-entry], [data-edit-entry], [data-delete-adjustment]");
+  const target = event.target.closest("[data-action], [data-view], [data-date], [data-preset], [data-entry-intent], [data-time-shortcut], [data-leave-shortcut], [data-bulk-mode], [data-delete-entry], [data-edit-entry], [data-delete-adjustment]");
   if (!target) return;
 
   if (target.dataset.view) {
@@ -121,6 +123,24 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.entryIntent) {
     ui.entryError = "";
     applyEntryIntent(target.dataset.entryIntent);
+    return;
+  }
+
+  if (target.dataset.timeShortcut) {
+    ui.entryError = "";
+    applyTimeShortcut(target.dataset.timeShortcut);
+    return;
+  }
+
+  if (target.dataset.leaveShortcut) {
+    ui.entryError = "";
+    applyLeaveShortcut(target.dataset.leaveShortcut);
+    return;
+  }
+
+  if (target.dataset.bulkMode) {
+    ui.bulkMode = target.dataset.bulkMode;
+    render();
     return;
   }
 
@@ -268,12 +288,26 @@ document.addEventListener("change", async (event) => {
     if (event.target.name === "leaveType") applyLeaveTypeDefaults(form, event.target.value);
     if (event.target.name === "leavePayMode") applyLeavePayModeDefaults(form, event.target.value);
     form?.setAttribute("data-record-mode", form.elements.recordMode?.value || RECORD_MODES.TIME);
+    form?.setAttribute("data-leave-pay-mode", form.elements.leavePayMode?.value || "paid");
     updateEntryPreview();
   }
 
   if (event.target.closest("#bulk-form")) updateBulkPreview();
 
-  if (event.target.name === "salaryMode" && event.target.closest("#settings-form")) {
+  const settingsForm = event.target.closest("#settings-form");
+  if (settingsForm) {
+    if (event.target.name === "tax.otherDeductionMode") {
+      settingsForm.dataset.taxOtherMode = event.target.value;
+    }
+    if (event.target.name === "tax.socialSecurityMode") {
+      settingsForm.dataset.taxSocialMode = event.target.value;
+    }
+    if (event.target.name === "restCycle.mode") {
+      settingsForm.dataset.restCycleMode = event.target.value;
+    }
+  }
+
+  if (event.target.name === "salaryMode" && settingsForm) {
     state.settings = limitSettings({
       ...state.settings,
       salaryMode: event.target.value
@@ -610,11 +644,12 @@ function renderEntryForm() {
           ${field("下班", `<input name="endTime" type="time" value="${escapeAttr(entry.endTime || "18:00")}" enterkeyhint="done">`)}
           ${field("休息", `<input name="breakMinutes" type="number" min="0" max="${WORK_LIMITS.maxBreakMinutes}" step="1" value="${escapeAttr(entry.breakMinutes ?? 60)}" inputmode="numeric" enterkeyhint="done">`)}
         </div>
+        ${renderTimeShortcuts(entry)}
       </div>
       <div class="time-preview" id="time-preview" aria-live="polite"></div>
     `;
   return `
-    <form id="entry-form" class="tool-form" data-record-mode="${recordMode}">
+    <form id="entry-form" class="tool-form" data-record-mode="${recordMode}" data-leave-pay-mode="${escapeAttr(entry.leavePayMode || "paid")}">
       <input type="hidden" name="id" value="${escapeAttr(entry.id || "")}">
       <input type="hidden" name="sourceHint" value="${escapeAttr(sourceHint)}">
       <div class="record-form-head">
@@ -695,14 +730,34 @@ function renderShiftChoice(entry) {
   `;
 }
 
+function renderTimeShortcuts(entry) {
+  const normalized = normalizeEntry(entry, state.settings);
+  const activeExtra = Math.max(0, normalized.overtimeHours);
+  return `
+    <div class="shortcut-row" aria-label="下班时间快捷调整">
+      <button type="button" data-time-shortcut="standard">准点下班</button>
+      <button type="button" data-time-shortcut="plus-1" class="${activeExtra === 1 ? "is-active" : ""}">加 1 小时</button>
+      <button type="button" data-time-shortcut="plus-2" class="${activeExtra === 2 ? "is-active" : ""}">加 2 小时</button>
+      <button type="button" data-time-shortcut="plus-3" class="${activeExtra === 3 ? "is-active" : ""}">加 3 小时</button>
+    </div>
+  `;
+}
+
 function renderLeaveFields(entry) {
   const leaveType = entry.leaveType || "annual";
   const leavePayMode = entry.leavePayMode || "paid";
+  const leaveHours = Number(entry.leaveHours ?? state.settings.normalHoursPerDay);
   return `
     <div class="leave-panel">
       <div>
         <span>请假信息</span>
-        <strong>选择假别和计薪方式</strong>
+        <strong>先选假别，再确认请假时长</strong>
+      </div>
+      <div class="shortcut-row leave-shortcuts" aria-label="请假时长快捷选择">
+        <button type="button" data-leave-shortcut="full" class="${leaveHours === state.settings.normalHoursPerDay ? "is-active" : ""}">全天</button>
+        <button type="button" data-leave-shortcut="half" class="${leaveHours === state.settings.normalHoursPerDay / 2 ? "is-active" : ""}">半天</button>
+        <button type="button" data-leave-shortcut="two-hours" class="${leaveHours === 2 ? "is-active" : ""}">2 小时</button>
+        <button type="button" data-leave-shortcut="custom">自定义</button>
       </div>
       <div class="form-grid">
         ${field("假别", `
@@ -720,11 +775,12 @@ function renderLeaveFields(entry) {
         `)}
       </div>
       <div class="form-grid">
-        ${field("计薪倍数", `<input name="leavePayMultiplier" type="number" min="0" step="0.1" value="${escapeAttr(entry.leavePayMultiplier ?? 1)}" inputmode="decimal" enterkeyhint="done">`)}
+        ${fieldWithClass("计薪倍数", `<input name="leavePayMultiplier" type="number" min="0" step="0.1" value="${escapeAttr(entry.leavePayMultiplier ?? 1)}" inputmode="decimal" enterkeyhint="done">`, "leave-multiplier-field")}
         ${field("请假小时", `<input name="leaveHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.leaveHours ?? state.settings.normalHoursPerDay)}" inputmode="decimal" enterkeyhint="done">`)}
-        ${field("扣工资金额", `<input name="leaveDeductionAmount" type="number" min="0" step="0.01" value="${escapeAttr(entry.leaveDeductionAmount || 0)}" inputmode="decimal" enterkeyhint="done">`)}
+        ${fieldWithClass("扣工资金额", `<input name="leaveDeductionAmount" type="number" min="0" step="0.01" value="${escapeAttr(entry.leaveDeductionAmount || 0)}" inputmode="decimal" enterkeyhint="done">`, "leave-deduction-field")}
       </div>
-      <small class="helper">年假通常可选带薪；事假可选不计薪或扣工资。这里按你实际工资规则记录，不再做额外提醒。</small>
+      <div class="time-preview" id="time-preview" aria-live="polite"></div>
+      <small class="helper">年假通常选带薪；事假可选不计薪或扣工资；病假可按你的工资规则填倍数。</small>
     </div>
   `;
 }
@@ -765,6 +821,36 @@ function renderSelectedDayList(entries, adjustments) {
 function renderEntryItem(entry) {
   const normalized = normalizeEntry(entry, state.settings);
   const pay = calculateEntryPay(entry, state.settings);
+  if (entry.source === "leave-note") {
+    return `
+      <article class="record-item">
+        <div>
+          <strong>${escapeHtml(LEAVE_TYPES[entry.leaveType] || "请假")} · ${entry.leaveHours || state.settings.normalHoursPerDay}h</strong>
+          <span>${leavePayModeLabel(entry.leavePayMode)} · ${money(pay.totalPay)}</span>
+          <small>请假计薪 ${money(pay.regularPay)}${entry.leavePayMode === "deduct" ? ` · 扣 ${money(entry.leaveDeductionAmount)}` : ""}</small>
+          ${entry.note ? `<small>${escapeHtml(entry.note)}</small>` : ""}
+        </div>
+        <div class="item-actions">
+          <button class="icon-button" type="button" data-edit-entry="${entry.id}" aria-label="编辑">✎</button>
+          <button class="icon-button danger" type="button" data-delete-entry="${entry.id}" aria-label="删除">×</button>
+        </div>
+      </article>
+    `;
+  }
+  if (entry.source === "rest-day") {
+    return `
+      <article class="record-item">
+        <div>
+          <strong>休息</strong>
+          <span>${entry.note ? escapeHtml(entry.note) : "当天不上班，不计工时"}</span>
+        </div>
+        <div class="item-actions">
+          <button class="icon-button" type="button" data-edit-entry="${entry.id}" aria-label="编辑">✎</button>
+          <button class="icon-button danger" type="button" data-delete-entry="${entry.id}" aria-label="删除">×</button>
+        </div>
+      </article>
+    `;
+  }
   const time = entry.recordMode === RECORD_MODES.TIME
     ? `${entry.startTime || "--:--"}-${entry.endTime || "--:--"}`
     : "工时录入";
@@ -841,53 +927,63 @@ function renderBulkPreview() {
   const end = formatDate(new Date(ui.year, ui.monthIndex + 1, 0));
   const addPreview = previewBulkAdd({ start, end, rule: "workdays", presetId: preset?.id, overwrite: false });
   const deletePreview = previewBulkDelete({ start, end, deleteKind: "bulk" });
+  const bulkMode = ui.bulkMode || "add";
   return `
-    <form id="bulk-form" class="bulk-tool">
+    <form id="bulk-form" class="bulk-tool" data-bulk-mode="${escapeAttr(bulkMode)}">
+      <div class="bulk-mode-switch" aria-label="批量操作类型">
+        <button class="${bulkMode === "add" ? "is-active" : ""}" type="button" data-bulk-mode="add">批量添加</button>
+        <button class="${bulkMode === "delete" ? "is-active" : ""}" type="button" data-bulk-mode="delete">批量删除</button>
+      </div>
       <div class="bulk-summary" id="bulk-preview" data-add="${escapeAttr(addPreview.summary)}" data-delete="${escapeAttr(deletePreview.summary)}">
-        <strong>${escapeHtml(addPreview.summary)}</strong>
-        <span>删除预览：${escapeHtml(deletePreview.summary)}</span>
-        <small>默认不覆盖已有记录；批量删除需要先勾选确认。</small>
+        <strong>${escapeHtml(bulkMode === "delete" ? deletePreview.summary : addPreview.summary)}</strong>
+        <span>${bulkMode === "delete" ? "删除前会先计算影响，且可撤销。" : "默认只补空白工作日，不覆盖已有记录。"}</span>
+        <small>${bulkMode === "delete" ? "为了防误删，需要勾选确认批量删除。" : "适合快速补齐整月白班、夜班或固定排班。"}</small>
       </div>
       <div class="form-grid">
         ${field("开始", `<input name="start" type="date" value="${escapeAttr(start)}" required>`)}
         ${field("结束", `<input name="end" type="date" value="${escapeAttr(end)}" required>`)}
       </div>
-      <div class="form-grid">
-        ${field("添加规则", `
-          <select name="rule">
-            <option value="workdays">仅工作日和调休上班</option>
-            <option value="all">每天都添加</option>
-            <option value="rest">只添加休息日/节假日</option>
-          </select>
-        `)}
-        ${field("班次", `
-          <select name="presetId">
-            ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
-          </select>
-        `)}
-      </div>
-      <label class="check-row slim">
-        <input type="checkbox" name="overwrite" value="true">
-        <span>覆盖已有工时记录</span>
-      </label>
-      <div class="form-grid">
-        ${field("删除范围", `
-          <select name="deleteKind">
-            <option value="bulk">仅批量生成</option>
-            <option value="overtime">仅加班记录</option>
-            <option value="entries">全部工时记录</option>
-            <option value="adjustments">全部补扣记录</option>
-            <option value="all">工时和补扣都删</option>
-          </select>
-        `)}
-        <label class="check-row slim confirm-delete">
-          <input type="checkbox" name="confirmDelete" value="true">
-          <span>确认批量删除</span>
+      ${bulkMode === "delete" ? `
+        <div class="form-grid">
+          ${field("删除范围", `
+            <select name="deleteKind">
+              <option value="bulk">仅批量生成</option>
+              <option value="overtime">仅加班记录</option>
+              <option value="entries">全部工时记录</option>
+              <option value="adjustments">全部补扣记录</option>
+              <option value="all">工时和补扣都删</option>
+            </select>
+          `)}
+          <label class="check-row slim confirm-delete">
+            <input type="checkbox" name="confirmDelete" value="true">
+            <span>确认批量删除</span>
+          </label>
+        </div>
+      ` : `
+        <div class="form-grid">
+          ${field("添加规则", `
+            <select name="rule">
+              <option value="workdays">仅工作日和调休上班</option>
+              <option value="all">每天都添加</option>
+              <option value="rest">只添加休息日/节假日</option>
+            </select>
+          `)}
+          ${field("班次", `
+            <select name="presetId">
+              ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
+            </select>
+          `)}
+        </div>
+        <label class="check-row slim">
+          <input type="checkbox" name="overwrite" value="true">
+          <span>覆盖已有工时记录</span>
         </label>
-      </div>
+      `}
       <div class="form-footer">
-        <button class="danger-button" type="submit" name="bulkAction" value="delete">批量删除</button>
-        <button class="primary-button" type="submit" name="bulkAction" value="add">批量添加</button>
+        <span></span>
+        ${bulkMode === "delete"
+          ? `<button class="danger-button" type="submit" name="bulkAction" value="delete">删除预览中的记录</button>`
+          : `<button class="primary-button" type="submit" name="bulkAction" value="add">添加预览中的日期</button>`}
       </div>
     </form>
   `;
@@ -1007,7 +1103,7 @@ function renderSettingsView() {
             <h2>薪资设置</h2>
           </div>
         </div>
-        <form id="settings-form" class="tool-form">
+        <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
           <div class="insight-panel">
             <div>
               <span>自动推算</span>
@@ -1079,11 +1175,11 @@ function renderSettingsView() {
             ${numberField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly, 0.01)}
             ${numberField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly, 0.01)}
             ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
-            ${numberField("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01)}
-            ${numberField("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 })}
+            ${numberFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, 0.01, {}, "tax-other-fixed")}
+            ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
             ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
-            ${numberField("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01)}
-            ${numberField("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 })}
+            ${numberFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, 0.01, {}, "tax-social-fixed")}
+            ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
           </div>
           <div class="form-footer">
             <label class="file-button">
@@ -1131,9 +1227,9 @@ function renderRestCycleSettings(settings) {
             ${option(REST_CYCLE_MODES.CUSTOM, "自定义", settings.restCycle.mode)}
           </select>
         `)}
-        ${field("上一次休息", `<input name="restCycle.lastRestDate" type="date" value="${escapeAttr(settings.restCycle.lastRestDate || "")}">`)}
-        ${numberField("连续上班天数", "restCycle.workDays", settings.restCycle.workDays, 1, { min: 1, max: 31 })}
-        ${numberField("连续休息天数", "restCycle.restDays", settings.restCycle.restDays, 1, { min: 1, max: 14 })}
+        ${fieldWithClass("上一次休息", `<input name="restCycle.lastRestDate" type="date" value="${escapeAttr(settings.restCycle.lastRestDate || "")}">`, "rest-anchor-field")}
+        ${numberFieldWithClass("连续上班天数", "restCycle.workDays", settings.restCycle.workDays, 1, { min: 1, max: 31 }, "rest-custom-field")}
+        ${numberFieldWithClass("连续休息天数", "restCycle.restDays", settings.restCycle.restDays, 1, { min: 1, max: 14 }, "rest-custom-field")}
       </div>
     </div>
   `;
@@ -1165,7 +1261,7 @@ function saveEntry(form, saveMode = "work") {
       source: "leave-note",
       updatedAt: new Date().toISOString(),
       createdAt: existing?.createdAt || new Date().toISOString()
-    }, "已保存请假", { skipAutoAdjustment: true });
+    }, "已保存请假", { strategy: "replace-main", skipAutoAdjustment: true });
     return;
   }
   if (saveMode === "rest") {
@@ -1201,7 +1297,7 @@ function saveEntry(form, saveMode = "work") {
     source: "manual",
     updatedAt: new Date().toISOString(),
     createdAt: existing?.createdAt || new Date().toISOString()
-  }, "已保存工时记录");
+  }, "已保存工时记录", { strategy: "replace-main" });
 }
 
 function saveEntryObject(entry, notice, options = {}) {
@@ -1353,15 +1449,25 @@ function updateEntryPreview() {
   const normalized = normalizeEntry(entry, state.settings);
   const pay = calculateEntryPay(entry, state.settings);
   const validation = validateEntry(entry, state.settings, state.entries);
+  const isLeave = data.sourceHint === "leave-note";
+  const leaveHours = Number(data.leaveHours || state.settings.normalHoursPerDay);
+  const displayHours = isLeave ? leaveHours : normalized.totalHours;
+  const monthlyPreview = validation.valid ? monthlyPreviewAfterEntry(entry, validation.normalized) : "";
   output.textContent = validation.valid
-    ? `${normalized.totalHours}h / ${money(pay.totalPay)}`
-    : `${normalized.totalHours}h / 不可保存`;
+    ? `${isLeave ? "请假 " : ""}${displayHours}h · 本条 ${money(pay.totalPay)}${monthlyPreview ? ` · ${monthlyPreview}` : ""}`
+    : `${displayHours}h / 不可保存`;
   if (timePreview) {
-    timePreview.innerHTML = `
-      <span>当天工时</span>
-      <strong>${normalized.totalHours}h</strong>
-      <small>正班 ${normalized.regularHours}h · 加班 ${normalized.overtimeHours}h · 预计 ${money(pay.totalPay)}</small>
-    `;
+    timePreview.innerHTML = isLeave
+      ? `
+        <span>请假预览</span>
+        <strong>${leaveHours}h</strong>
+        <small>${escapeHtml(LEAVE_TYPES[data.leaveType] || "请假")} · ${escapeHtml(leavePayModeLabel(data.leavePayMode))} · 预计 ${money(pay.totalPay)}</small>
+      `
+      : `
+        <span>当天工时</span>
+        <strong>${normalized.totalHours}h</strong>
+        <small>正班 ${normalized.regularHours}h · 加班 ${normalized.overtimeHours}h · 预计 ${money(pay.totalPay)}</small>
+      `;
   }
   const message = ui.entryError || validation.errors[0] || validation.warnings[0] || "";
   if (errorBox) {
@@ -1369,6 +1475,39 @@ function updateEntryPreview() {
     errorBox.textContent = message;
     errorBox.classList.toggle("is-warning", validation.valid && Boolean(validation.warnings[0]) && !ui.entryError);
   }
+}
+
+function monthlyPreviewAfterEntry(entry, normalized) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || ""))) return "";
+  const simulatedEntry = {
+    ...entry,
+    regularHours: normalized.regularHours,
+    overtimeHours: normalized.overtimeHours,
+    totalHours: normalized.totalHours
+  };
+  let entries = state.entries.filter((item) => item.id !== simulatedEntry.id);
+  const sameDateMain = entries.filter((item) => item.date === simulatedEntry.date && !isQuickOvertimeEntry(item));
+  if (!simulatedEntry.id && sameDateMain.length === 1) {
+    const replacedId = sameDateMain[0].id;
+    entries = entries.filter((item) => item.id !== replacedId);
+  }
+  entries = entries.concat(simulatedEntry);
+  const month = summarizeYear(entries, state.adjustments, state.settings, yearFromDate(simulatedEntry.date))[monthIndexFromDate(simulatedEntry.date)];
+  if (!month) return "";
+  const goal = Number(state.settings.goals.monthlyIncome || 0);
+  const gapText = goal > 0
+    ? (month.netIncome >= goal ? `，超目标 ${money(month.netIncome - goal)}` : `，距目标 ${money(goal - month.netIncome)}`)
+    : "";
+  return `本月税后约 ${money(month.netIncome)}${gapText}`;
+}
+
+function leavePayModeLabel(mode) {
+  return ({
+    paid: "带薪",
+    unpaid: "不计薪",
+    deduct: "扣工资",
+    custom: "按倍数计薪"
+  })[mode] || "带薪";
 }
 
 function applyPresetToForm(presetId) {
@@ -1432,6 +1571,58 @@ function applyEntryIntent(intent) {
   }
 }
 
+function applyTimeShortcut(shortcut) {
+  const form = document.querySelector("#entry-form");
+  if (!form?.elements.startTime || !form?.elements.endTime) return;
+  const extraHours = {
+    standard: 0,
+    "plus-1": 1,
+    "plus-2": 2,
+    "plus-3": 3
+  }[shortcut];
+  if (extraHours === undefined) return;
+  const defaultPreset = getWorkDefaultPreset(state.settings);
+  const startMinutes = parseTimeToMinutes(form.elements.startTime.value)
+    ?? parseTimeToMinutes(defaultPreset?.startTime || "09:00");
+  const breakMinutes = Number(form.elements.breakMinutes?.value || defaultPreset?.breakMinutes || 0);
+  const matchingPreset = (state.settings.shiftPresets || []).find((preset) => {
+    return preset.recordMode === RECORD_MODES.TIME
+      && preset.dayType !== "restday"
+      && preset.dayType !== "holiday"
+      && preset.startTime === form.elements.startTime.value
+      && Number(preset.breakMinutes || 0) === breakMinutes;
+  });
+  const presetEnd = parseTimeToMinutes(matchingPreset?.endTime || "");
+  const baseEnd = presetEnd === null
+    ? startMinutes + Number(state.settings.normalHoursPerDay || 0) * 60 + breakMinutes
+    : presetEnd + (presetEnd <= startMinutes ? 24 * 60 : 0);
+  form.elements.recordMode.value = RECORD_MODES.TIME;
+  form.setAttribute("data-record-mode", RECORD_MODES.TIME);
+  form.elements.endTime.value = minutesToClock(baseEnd + extraHours * 60);
+  updateEntryPreview();
+}
+
+function applyLeaveShortcut(shortcut) {
+  const form = document.querySelector("#entry-form");
+  if (!form?.elements.leaveHours) return;
+  if (shortcut === "custom") {
+    form.elements.leaveHours.focus();
+    return;
+  }
+  const normalHours = Number(state.settings.normalHoursPerDay || 8);
+  const hours = {
+    full: normalHours,
+    half: round2(normalHours / 2),
+    "two-hours": 2
+  }[shortcut];
+  if (hours === undefined) return;
+  form.elements.leaveHours.value = hours;
+  for (const button of form.querySelectorAll("[data-leave-shortcut]")) {
+    button.classList.toggle("is-active", button.dataset.leaveShortcut === shortcut);
+  }
+  updateEntryPreview();
+}
+
 function setEntryChoiceActive(intent) {
   const form = document.querySelector("#entry-form");
   if (!form) return;
@@ -1440,12 +1631,21 @@ function setEntryChoiceActive(intent) {
   }
 }
 
+function minutesToClock(totalMinutes) {
+  const minutesInDay = 24 * 60;
+  const normalized = ((Math.round(totalMinutes) % minutesInDay) + minutesInDay) % minutesInDay;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 function applyLeaveTypeDefaults(form, leaveType) {
   if (!form?.elements.leavePayMode) return;
   const defaults = leaveDefaultsForType(leaveType);
   form.elements.leavePayMode.value = defaults.leavePayMode;
   form.elements.leavePayMultiplier.value = defaults.leavePayMultiplier;
   form.elements.leaveDeductionAmount.value = 0;
+  form.setAttribute("data-leave-pay-mode", defaults.leavePayMode);
 }
 
 function applyLeavePayModeDefaults(form, mode) {
@@ -1454,6 +1654,7 @@ function applyLeavePayModeDefaults(form, mode) {
   if (mode === "paid" && Number(form.elements.leavePayMultiplier.value || 0) === 0) {
     form.elements.leavePayMultiplier.value = 1;
   }
+  form.setAttribute("data-leave-pay-mode", mode || "paid");
 }
 
 function leaveDefaultsForType(leaveType) {
@@ -1613,11 +1814,14 @@ function updateBulkPreview() {
   const config = bulkConfigFromForm(form);
   const addPreview = previewBulkAdd(config);
   const deletePreview = previewBulkDelete(config);
-  preview.querySelector("strong").textContent = addPreview.summary;
-  preview.querySelector("span").textContent = `删除预览：${deletePreview.summary}`;
-  preview.querySelector("small").textContent = config.overwrite
-    ? "已打开覆盖，批量添加会替换范围内已有工时。"
-    : "默认不覆盖已有记录；批量删除需要先勾选确认。";
+  const mode = form.dataset.bulkMode || ui.bulkMode || "add";
+  preview.querySelector("strong").textContent = mode === "delete" ? deletePreview.summary : addPreview.summary;
+  preview.querySelector("span").textContent = mode === "delete"
+    ? "删除前会先计算影响，且可撤销。"
+    : "默认只补空白工作日，不覆盖已有记录。";
+  preview.querySelector("small").textContent = mode === "delete"
+    ? (config.confirmDelete ? "已确认删除，提交后仍可撤销。" : "为了防误删，需要勾选确认批量删除。")
+    : (config.overwrite ? "已打开覆盖，批量添加会替换范围内已有工时。" : "适合快速补齐整月白班、夜班或固定排班。");
 }
 
 function bulkConfigFromForm(form) {
@@ -1729,12 +1933,13 @@ function undoDelete() {
 function persist(notice = "") {
   ui.notice = notice;
   saveState(state);
+  const duration = /删除|覆盖|导入/.test(notice) ? 9000 : 2800;
   if (notice) window.setTimeout(() => {
     if (ui.notice === notice) {
       ui.notice = "";
       render();
     }
-  }, 2400);
+  }, duration);
 }
 
 function entriesForDate(date) {
@@ -1932,10 +2137,20 @@ function field(label, control) {
   return `<label class="field"><span>${label}</span>${control}</label>`;
 }
 
+function fieldWithClass(label, control, className) {
+  return `<label class="field ${escapeAttr(className)}"><span>${label}</span>${control}</label>`;
+}
+
 function numberField(label, name, value, step, options = {}) {
   const min = options.min ?? 0;
   const max = options.max === undefined ? "" : ` max="${escapeAttr(options.max)}"`;
   return field(label, `<input name="${escapeAttr(name)}" type="number" min="${escapeAttr(min)}"${max} step="${step}" value="${escapeAttr(value)}">`);
+}
+
+function numberFieldWithClass(label, name, value, step, options = {}, className = "") {
+  const min = options.min ?? 0;
+  const max = options.max === undefined ? "" : ` max="${escapeAttr(options.max)}"`;
+  return fieldWithClass(label, `<input name="${escapeAttr(name)}" type="number" min="${escapeAttr(min)}"${max} step="${step}" value="${escapeAttr(value)}">`, className);
 }
 
 function radio(name, value, label, current) {
