@@ -15,6 +15,7 @@ import {
   formatDate,
   getHolidayInfo,
   getShiftPreset,
+  getUnloggedDays,
   inferDayType,
   mergeSettings,
   monthIndexFromDate,
@@ -551,6 +552,28 @@ function renderReadiness() {
   `;
 }
 
+function renderUnloggedPanel() {
+  const unlogged = getUnloggedDays(ui.year, ui.monthIndex, state.entries, state.settings);
+  if (!unlogged.length) return "";
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  const items = unlogged.map((date) => {
+    const d = new Date(`${date}T00:00:00`);
+    const wd = weekdays[d.getDay()];
+    const md = date.slice(5).replace("-", "/");
+    return `<button class="unlogged-item" type="button" data-date="${date}"><span>${md}</span><small>周${wd}</small></button>`;
+  }).join("");
+  return `
+    <div class="unlogged-panel">
+      <div class="unlogged-head">
+        <span class="unlogged-badge">${unlogged.length}</span>
+        <strong>未补登</strong>
+        <small>工作日缺记录</small>
+      </div>
+      <div class="unlogged-list">${items}</div>
+    </div>
+  `;
+}
+
 function renderCalendarView() {
   const days = buildCalendarDays(ui.year, ui.monthIndex);
   const entriesByDate = groupByDate(state.entries);
@@ -559,6 +582,7 @@ function renderCalendarView() {
   const selectedAdjustments = adjustmentsForDate(ui.selectedDate);
   return `
     <div class="workspace calendar-layout">
+      ${renderUnloggedPanel()}
       <section class="calendar-panel" aria-label="日历">
         <div class="weekday-grid">
           ${WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}

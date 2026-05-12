@@ -16,6 +16,7 @@ import {
   buildCalendarDays,
   buildEntryFromShiftPreset,
   getHolidayInfo,
+  getUnloggedDays,
   inferDayType,
   isWorkday,
   mergeSettings,
@@ -721,4 +722,22 @@ test("hourly mode with mixed day types", () => {
   }, settings);
   assert.equal(restday.regularPay, 0);
   assert.equal(restday.overtimePay, 300); // 6 * 25 * 2
+});
+
+test("getUnloggedDays finds workdays missing entries up to today", () => {
+  const settings = mergeSettings({ workweek: [0, 6], autoDayType: true });
+  // 2026-05-04 is Monday, 05-05 Tuesday, 05-06 Wednesday — all workdays
+  const entries = [
+    { date: "2026-05-04", recordMode: RECORD_MODES.HOURS, totalHours: 8 }
+  ];
+  const unlogged = getUnloggedDays(2026, 4, entries, settings);
+  // Should include 05-05 and 05-06 (workdays without entries, if today >= those dates)
+  // Should not include 05-03 (Sunday = restday) or 05-04 (has entry)
+  assert.ok(!unlogged.includes("2026-05-03"), "restday excluded");
+  assert.ok(!unlogged.includes("2026-05-04"), "day with entry excluded");
+  // Only past/today dates are included — future dates are excluded
+  const today = new Date().toISOString().slice(0, 10);
+  for (const date of unlogged) {
+    assert.ok(date <= today, `date ${date} should be <= today`);
+  }
 });

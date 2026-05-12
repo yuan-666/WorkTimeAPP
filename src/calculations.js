@@ -982,6 +982,23 @@ function workweekRestReminder(date, settings) {
   };
 }
 
+export function getUnloggedDays(year, monthIndex, entries, settings = DEFAULT_SETTINGS) {
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const entryDates = new Set(entries.map((entry) => entry.date));
+  const unlogged = [];
+  const today = formatDate(new Date());
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, monthIndex, day);
+    const dateText = formatDate(date);
+    if (dateText > today) break;
+    if (entryDates.has(dateText)) continue;
+    if (inferDayType(dateText, settings) === "workday") {
+      unlogged.push(dateText);
+    }
+  }
+  return unlogged;
+}
+
 function addDays(date, days) {
   const parsed = new Date(`${date}T00:00:00`);
   parsed.setDate(parsed.getDate() + days);
