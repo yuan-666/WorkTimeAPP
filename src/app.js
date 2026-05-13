@@ -406,7 +406,7 @@ document.addEventListener("change", async (event) => {
     updateBulkPreview();
   }
 
-  const settingsForm = event.target.closest("#settings-form");
+  const settingsForm = event.target.closest("#settings-form, .settings-detail-form");
   if (settingsForm) {
     if (event.target.name === "tax.otherDeductionMode") {
       settingsForm.dataset.taxOtherMode = event.target.value;
@@ -424,7 +424,7 @@ document.addEventListener("change", async (event) => {
       ...state.settings,
       salaryMode: event.target.value
     });
-    render();
+    if (!isMobileViewport()) render();
     return;
   }
 
@@ -437,7 +437,7 @@ document.addEventListener("change", async (event) => {
         shiftPresets: newPresets,
         defaultPresetId: newPresets.find((p) => p.dayType !== "restday")?.id || "day"
       });
-      render();
+      updatePresetEditor(settingsForm);
     }
     return;
   }
@@ -2169,10 +2169,14 @@ function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form));
   const next = mergeSettings(state.settings);
   const nextCloud = { ...(state.cloud || {}) };
-  next.workweek = [];
-  next.shiftPresets = [];
-  next.autoAdjustment.enabled = false;
-  next.autoFillWorkday = false;
+  const hasWorkweek = Object.keys(data).some((k) => k.startsWith("workweek."));
+  const hasPresets = Object.keys(data).some((k) => k.startsWith("shiftPresets."));
+  const hasAutoAdj = Object.keys(data).some((k) => k === "autoAdjustment.enabled");
+  const hasAutoFill = Object.keys(data).some((k) => k === "autoFillWorkday");
+  if (hasWorkweek) next.workweek = [];
+  if (hasPresets) next.shiftPresets = [];
+  if (hasAutoAdj) next.autoAdjustment.enabled = false;
+  if (hasAutoFill) next.autoFillWorkday = false;
   for (const [key, value] of Object.entries(data)) {
     if (key.startsWith("cloud.")) {
       const fieldName = key.split(".")[1];
@@ -2212,6 +2216,7 @@ function saveSettings(form) {
   if (!next.workweek.length) next.workweek = DEFAULT_SETTINGS.workweek;
   state.settings = limitSettings(next);
   state.cloud = normalizeCloudConfig(nextCloud);
+  ui.settingsSheetOpen = "";
   persist("已保存设置");
   render();
 }
@@ -3157,6 +3162,22 @@ function detectWorkType(presets) {
   if (has("night") && has("night-ot") && !has("day")) return "night";
   if (has("night") && !has("day")) return "night";
   return "custom";
+}
+
+function updatePresetEditor(form) {
+  const editor = form.querySelector(".preset-editor");
+  if (!editor) return;
+  const settings = state.settings;
+  editor.innerHTML = settings.shiftPresets.map((preset, index) =>
+    `<div class="${preset.id === "rest" ? "preset-hidden" : ""}">${renderPresetEditor(preset, index)}</div>`
+  ).join("");
+  const defaultSelect = form.querySelector('[name="defaultPresetId"]');
+  if (defaultSelect) {
+    defaultSelect.innerHTML = settings.shiftPresets
+      .filter((p) => p.dayType !== "restday")
+      .map((p) => `<option value="${escapeAttr(p.id)}" ${p.id === settings.defaultPresetId ? "selected" : ""}>${escapeHtml(p.name)}</option>`)
+      .join("");
+  }
 }
 
 function limitSettings(settings) {
