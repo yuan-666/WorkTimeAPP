@@ -18,6 +18,23 @@
 - 后续建议：
 ```
 
+## 2026-05-13 21:20 CST - v0.2.10 手机端交互与登录修复
+
+- 触发原因：用户要求读取当前迭代记录、更新记忆，并集中修复手机版点击闪现、操作不舒服和无法登录等问题，同时召唤不同 agent 做测试流程。
+- 修改文件：`src/app.js`、`styles.css`、`functions/index.js`、`tests/functions.test.js`、`index.html`、`admin.html`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 移动端整页入场动画只在主页面切换时触发；点击日历日期、打开/关闭登记抽屉、切换设置二级页不再反复整页闪现。
+  - 登记抽屉改为两阶段打开/关闭，并在打开时锁住页面背景滚动。
+  - 手机设置页保留底部四个主入口，二级设置使用页内返回；云备份按钮会读取当前二级页表单，手机端登录/备份/恢复不再读不到密码。
+  - 设置保存重构为 `settingsFromForm()`，取消勾选 `autoFillWorkday`、自动补扣或工作日时能正确保存；移动端切换薪资方式会保留当前草稿并刷新字段。
+  - 批量处理新增草稿保留，切换批量添加/批量删除不再重置日期范围、加班小时、删除范围和确认状态；`bulk-form` 支持 Enter 提交。
+  - 管理员后端兼容 KV 中 `admin_name` 前后空格、`admin_passwd` 标准 PBKDF2、`salt/hash` 简写、明文字符串和常见 `{ value/password/plain }` 包装；`RSA_key` 和密码配置兼容误复制的三反引号代码围栏。
+  - 坏密文会返回友好的登录信息错误，不再暴露 `Failed to decode base64` 等底层异常。
+  - 版本更新到 v0.2.10，Service Worker 缓存名更新到 `worktimeapp-v22`。
+- 验证结果：`npm test` 43 项通过（新增 ESA 单入口管理员登录测试 2 项）；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；浏览器手机宽度冒烟通过日期抽屉打开/关闭、隐藏抽屉 `aria-hidden`、手机设置数据管理页云同步表单读取、批量处理切换保留日期范围和版本显示 `v0.2.10`。
+- 风险/注意：移动端设置详情页现在由状态驱动渲染，若后续继续增加设置分组，需要确保分组表单包含的 checkbox 字段能被 `settingsFromForm()` 识别。
+- 后续建议：发布后用真机在 `time.yuan6.cn` 检查手机日历日期点击、云同步登录、批量处理切换和管理员后台登录；如果仍登录失败，优先核对 KV 中 `admin_name` 与 `admin_passwd` 的实际值。
+
 ## 2026-05-13 19:00 CST - v0.2.9 bug 修复：班次切换和设置保存
 
 - 触发原因：用户反馈班次管理无法切换上班方式、设置详情页操作异常。

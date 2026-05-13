@@ -21,7 +21,7 @@ export default {
       }
       return json({ ok: true, service: "worktimeapp" });
     } catch (error) {
-      return json({ error: error.message || "服务暂时不可用" }, 500);
+      return json({ error: publicErrorMessage(error) }, error.status || 500);
     }
   }
 };
@@ -163,11 +163,14 @@ async function verifyAdminCredentials(kv, username, password) {
     throw new Error("管理员账号尚未配置");
   }
   if (!constantTimeEqual(username, expectedName)) return false;
-  if (typeof expectedPassword === "object" && expectedPassword.passwordSalt && expectedPassword.passwordHash) {
-    return verifyPassword(password, expectedPassword.passwordSalt, expectedPassword.passwordHash);
+  const passwordRecord = normalizePasswordCredential(expectedPassword);
+  if (!passwordRecord) {
+    throw new Error("管理员密码格式错误，请重新生成 admin_passwd");
   }
-  const plain = typeof expectedPassword === "string" ? expectedPassword : String(expectedPassword.value || "");
-  return Boolean(plain) && constantTimeEqual(password, plain);
+  if (passwordRecord.type === "hash") {
+    return verifyPassword(password, passwordRecord.salt, passwordRecord.hash);
+  }
+  return Boolean(passwordRecord.password) && constantTimeEqual(password, passwordRecord.password);
 }
 
 async function adminUpdateUser(kv, body) {
@@ -293,20 +296,36 @@ async function publicPasswordKey(kv) {
 
 async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher") {
   const ciphertext = String(payload[fieldName] || "");
-  if (!ciphertext) throw new Error("请使用最新版应用进行安全登录");
+  if (!ciphertext) throw httpError("请使用最新版应用进行安全登录", 400);
   const { jwk } = await readPasswordKeyMaterial(kv);
-  const key = await crypto.subtle.importKey(
-    "jwk",
-    { ...jwk, alg: "RSA-OAEP-256", ext: true, key_ops: ["decrypt"] },
-    { name: "RSA-OAEP", hash: "SHA-256" },
-    false,
-    ["decrypt"]
-  );
-  const decrypted = await crypto.subtle.decrypt(
-    { name: "RSA-OAEP" },
-    key,
-    base64UrlToBytes(ciphertext)
-  );
+  let key;
+  try {
+    key = await crypto.subtle.importKey(
+      "jwk",
+      { ...jwk, alg: "RSA-OAEP-256", ext: true, key_ops: ["decrypt"] },
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      false,
+      ["decrypt"]
+    );
+  } catch {
+    throw httpError("云端安全密钥配置异常", 500);
+  }
+  let encryptedBytes;
+  try {
+    encryptedBytes = base64UrlToBytes(ciphertext);
+  } catch {
+    throw httpError("登录信息格式不正确，请刷新页面后重试", 400);
+  }
+  let decrypted;
+  try {
+    decrypted = await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      key,
+      encryptedBytes
+    );
+  } catch {
+    throw httpError("登录信息校验失败，请刷新页面后重试", 401);
+  }
   return new TextDecoder().decode(decrypted);
 }
 
@@ -324,6 +343,23 @@ function normalizePrivateJwk(value) {
   const parsed = typeof value === "string" ? parseMaybeJson(value) : value;
   const candidate = parsed?.privateKey || parsed?.jwk || parsed;
   if (candidate?.kty === "RSA" && candidate.n && candidate.e && candidate.d) return candidate;
+  return null;
+}
+
+function normalizePasswordCredential(value) {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === "string" ? parseMaybeJson(value) : value;
+  if (typeof parsed === "string") {
+    const password = cleanStoredText(parsed);
+    return password ? { type: "plain", password } : null;
+  }
+  if (parsed?.value !== undefined) return normalizePasswordCredential(parsed.value);
+  if (parsed?.password !== undefined) return normalizePasswordCredential(parsed.password);
+  if (parsed?.passwd !== undefined) return normalizePasswordCredential(parsed.passwd);
+  if (parsed?.plain !== undefined) return normalizePasswordCredential(parsed.plain);
+  const salt = parsed?.passwordSalt || parsed?.salt;
+  const hash = parsed?.passwordHash || parsed?.hash;
+  if (salt && hash) return { type: "hash", salt: String(salt).trim(), hash: String(hash).trim() };
   return null;
 }
 
@@ -364,7 +400,12 @@ async function verifyAdminSession(request, kv) {
   if (!body || !signature) return null;
   const expected = await hmacSign(kv, body);
   if (!constantTimeEqual(signature, expected)) return null;
-  const payload = parseMaybeJson(new TextDecoder().decode(base64UrlToBytes(body)));
+  let payload;
+  try {
+    payload = parseMaybeJson(new TextDecoder().decode(base64UrlToBytes(body)));
+  } catch {
+    return null;
+  }
   if (!payload || payload.role !== "admin") return null;
   if (Number(payload.exp || 0) < Math.floor(Date.now() / 1000)) return null;
   return payload;
@@ -394,16 +435,17 @@ async function readRecord(kv, key) {
 
 async function readTextValue(kv, key) {
   const value = await readRecord(kv, key);
-  if (typeof value === "string") return value;
-  if (value?.value !== undefined) return String(value.value);
+  if (typeof value === "string") return cleanStoredText(value);
+  if (value?.value !== undefined) return cleanStoredText(value.value);
   return "";
 }
 
 function parseMaybeJson(value) {
+  const text = cleanStoredText(value);
   try {
-    return JSON.parse(value);
+    return JSON.parse(text);
   } catch {
-    return value;
+    return text;
   }
 }
 
@@ -475,7 +517,9 @@ function base64UrlText(text) {
 }
 
 function base64UrlToBytes(value) {
-  const normalized = String(value || "").replaceAll("-", "+").replaceAll("_", "/");
+  const text = String(value || "").trim();
+  if (!/^[A-Za-z0-9_-]+={0,2}$/.test(text)) throw new Error("invalid base64url");
+  const normalized = text.replaceAll("-", "+").replaceAll("_", "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
@@ -483,6 +527,28 @@ function base64UrlToBytes(value) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function cleanStoredText(value) {
+  let text = String(value ?? "").trim();
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) text = fenced[1].trim();
+  return text;
+}
+
+function httpError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  error.publicMessage = message;
+  return error;
+}
+
+function publicErrorMessage(error) {
+  const message = error?.publicMessage || error?.message || "";
+  if (/base64|decode|decrypt|DataError|OperationError/i.test(message)) {
+    return "登录信息校验失败，请刷新页面后重试";
+  }
+  return message || "服务暂时不可用";
 }
 
 function constantTimeEqual(left = "", right = "") {

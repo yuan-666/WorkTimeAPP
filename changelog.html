@@ -315,6 +315,49 @@
         <div class="timeline" aria-label="版本时间轴">
           <article class="item">
             <span class="index">01</span>
+            <span class="version">v0.2.10</span>
+            <div class="content">
+              <h2>手机端交互与登录修复</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>手机端云备份会读取当前设置二级页表单，登录、备份和恢复不再读不到密码。</li>
+                <li>登记抽屉改为稳定的打开/关闭过渡，日期点击和设置切换不再反复整页闪现。</li>
+                <li>批量处理保留当前草稿，切换添加/删除不会清空日期范围、加班小时和确认状态。</li>
+                <li>管理员登录配置兼容更多 KV 写法，坏密文不再暴露底层错误。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">02</span>
+            <span class="version">v0.2.9</span>
+            <div class="content">
+              <h2>班次切换与设置保存</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>修复移动端设置详情页里班次管理无法切换上班方式的问题。</li>
+                <li>保存设置时只重置当前表单实际包含的字段，避免其他设置被误清空。</li>
+                <li>切换上班方式时局部更新班次编辑器，减少全页重绘。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">03</span>
+            <span class="version">v0.2.8</span>
+            <div class="content">
+              <h2>自动工时与手机二级设置</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>无记录工作日可自动按默认正班工时计入工资，减少每天重复登记。</li>
+                <li>批量添加改为直接按钮处理，避免表单断开导致无反应。</li>
+                <li>移动端设置页改为菜单列表和二级详情页，更接近 App 操作习惯。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">04</span>
             <span class="version">v0.2.7</span>
             <div class="content">
               <h2>缓存穿透与版本生效修复</h2>
@@ -328,7 +371,7 @@
           </article>
 
           <article class="item">
-            <span class="index">02</span>
+            <span class="index">05</span>
             <span class="version">v0.2.6</span>
             <div class="content">
               <h2>批量登记与移动端抽屉</h2>
@@ -342,7 +385,7 @@
           </article>
 
           <article class="item">
-            <span class="index">03</span>
+            <span class="index">06</span>
             <span class="version">v0.2.5</span>
             <div class="content">
               <h2>部署、安全云备份与侧边栏收口</h2>
@@ -356,7 +399,7 @@
           </article>
 
           <article class="item">
-            <span class="index">04</span>
+            <span class="index">07</span>
             <span class="version">v0.2.4</span>
             <div class="content">
               <h2>底部动态日志与版权外链</h2>
@@ -370,7 +413,7 @@
           </article>
 
           <article class="item">
-            <span class="index">05</span>
+            <span class="index">08</span>
             <span class="version">v0.2.3</span>
             <div class="content">
               <h2>独立后台与安全云备份</h2>
@@ -385,7 +428,7 @@
           </article>
 
           <article class="item">
-            <span class="index">06</span>
+            <span class="index">09</span>
             <span class="version">v0.2.2</span>
             <div class="content">
               <h2>输入、主题与时间轴更新日志</h2>
@@ -400,7 +443,7 @@
           </article>
 
           <article class="item">
-            <span class="index">07</span>
+            <span class="index">10</span>
             <span class="version">v0.2.1</span>
             <div class="content">
               <h2>云同步、后台与真实排班</h2>
@@ -414,7 +457,7 @@
           </article>
 
           <article class="item">
-            <span class="index">08</span>
+            <span class="index">11</span>
             <span class="version">v0.2.0</span>
             <div class="content">
               <h2>数据可视化与深色适配</h2>
@@ -428,7 +471,7 @@
           </article>
 
           <article class="item">
-            <span class="index">09</span>
+            <span class="index">12</span>
             <span class="version">v0.1.8</span>
             <div class="content">
               <h2>未补登工作日</h2>
@@ -441,7 +484,7 @@
           </article>
 
           <article class="item">
-            <span class="index">10</span>
+            <span class="index">13</span>
             <span class="version">v0.1.7</span>
             <div class="content">
               <h2>首次使用向导</h2>
@@ -454,7 +497,7 @@
           </article>
 
           <article class="item">
-            <span class="index">11</span>
+            <span class="index">14</span>
             <span class="version">v0.1.6</span>
             <div class="content">
               <h2>每日登记交互优化</h2>
@@ -467,7 +510,7 @@
           </article>
 
           <article class="item">
-            <span class="index">12</span>
+            <span class="index">15</span>
             <span class="version">v0.1.0</span>
             <div class="content">
               <h2>PWA 基础版本</h2>

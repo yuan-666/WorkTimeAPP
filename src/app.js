@@ -30,21 +30,21 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.2.9";
+} from "./calculations.js?v=0.2.10";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.2.9";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.9";
+} from "./storage.js?v=0.2.10";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.10";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.2.9";
-const RELEASE_COUNT = 19;
+const APP_VERSION = "v0.2.10";
+const RELEASE_COUNT = 20;
 const CLOUD_API_BASE = "/api/cloud";
 let state = loadState();
 let ui = {
@@ -57,14 +57,18 @@ let ui = {
   entryIntent: "",
   entryError: "",
   entrySheetOpen: false,
+  entrySheetVisible: false,
   bulkMode: "add",
   bulkAddKind: "",
+  bulkDraft: null,
+  bulkDraftMonth: "",
   settingsSheetOpen: "",
   notice: "",
   lastDeleted: null,
   recordsSearch: "",
   recordsDateFrom: "",
-  recordsDateTo: ""
+  recordsDateTo: "",
+  pageTransition: true
 };
 const repairedOnLoad = repairRepeatedEntries();
 if (repairedOnLoad) {
@@ -109,8 +113,12 @@ document.addEventListener("click", async (event) => {
   if (!target) return;
 
   if (target.dataset.view) {
-    ui.view = target.dataset.view;
+    const nextView = target.dataset.view;
+    ui.pageTransition = ui.view !== nextView;
+    ui.view = nextView;
     state.activeView = ui.view;
+    ui.entrySheetOpen = false;
+    ui.entrySheetVisible = false;
     persist();
     render();
     return;
@@ -125,9 +133,10 @@ document.addEventListener("click", async (event) => {
     ui.entryIntent = "";
     ui.entryError = "";
     if (isMobileViewport() && target.closest(".calendar-panel, .unlogged-panel")) {
-      ui.entrySheetOpen = true;
+      openEntrySheet();
+    } else {
+      render();
     }
-    render();
     return;
   }
 
@@ -156,6 +165,8 @@ document.addEventListener("click", async (event) => {
   }
 
   if (target.dataset.bulkMode) {
+    const form = target.closest("#bulk-form") || document.querySelector("#bulk-form");
+    if (form) rememberBulkDraft(form);
     ui.bulkMode = target.dataset.bulkMode;
     render();
     return;
@@ -240,30 +251,19 @@ document.addEventListener("click", async (event) => {
   }
 
   if (action === "close-entry-sheet") {
-    ui.entrySheetOpen = false;
-    ui.editingEntryId = "";
-    ui.entryError = "";
-    render();
+    closeEntrySheet();
+    return;
   }
 
   if (action === "close-settings-sheet") {
-    const container = target.closest(".detail-panel") || document;
-    const list = container.querySelector(".settings-mobile-list");
-    const details = container.querySelectorAll(".settings-mobile-detail");
-    if (list) list.classList.remove("is-hidden");
-    details.forEach((d) => d.classList.remove("is-visible"));
     ui.settingsSheetOpen = "";
+    render();
     return;
   }
 
   if (action === "open-settings-sheet") {
-    const group = target.dataset.group;
-    const container = target.closest(".detail-panel") || document;
-    const list = container.querySelector(".settings-mobile-list");
-    const detail = container.querySelector(`[data-settings-detail="${group}"]`);
-    if (list) list.classList.add("is-hidden");
-    if (detail) detail.classList.add("is-visible");
-    ui.settingsSheetOpen = group;
+    ui.settingsSheetOpen = target.dataset.group || "";
+    render();
     return;
   }
 
@@ -297,7 +297,7 @@ document.addEventListener("click", async (event) => {
   }
 
   if (action?.startsWith("cloud-")) {
-    await handleCloudAction(action);
+    await handleCloudAction(action, target);
     return;
   }
 
@@ -349,6 +349,10 @@ document.addEventListener("submit", (event) => {
   if (formId === "adjustment-form") saveAdjustment(form);
   if (formId === "settings-form") saveSettings(form);
   if (formClass.includes("settings-detail-form")) saveSettings(form);
+  if (formId === "bulk-form") {
+    if ((form.dataset.bulkMode || ui.bulkMode) === "delete") bulkDelete(form);
+    else bulkAdd(form);
+  }
   if (formId === "setup-form") saveSetupWizard(form);
 });
 
@@ -420,11 +424,12 @@ document.addEventListener("change", async (event) => {
   }
 
   if (event.target.name === "salaryMode" && settingsForm) {
-    state.settings = limitSettings({
-      ...state.settings,
-      salaryMode: event.target.value
-    });
-    if (!isMobileViewport()) render();
+    const draft = settingsFromForm(settingsForm);
+    draft.settings.salaryMode = event.target.value;
+    state.settings = limitSettings(draft.settings);
+    state.cloud = draft.cloud;
+    ui.settingsSheetOpen = settingsForm.dataset.settingsGroup || ui.settingsSheetOpen;
+    render();
     return;
   }
 
@@ -473,7 +478,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.9", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.10", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -497,7 +502,7 @@ function render() {
   app.innerHTML = `
     <div class="shell">
       ${renderSidebar()}
-      <main class="main">
+      <main class="main ${ui.pageTransition ? "is-page-entering" : ""}">
         ${renderTopbar()}
         ${renderReadiness()}
         ${ui.notice ? `<p class="notice" role="status">${escapeHtml(ui.notice)}${ui.lastDeleted ? ` <button type="button" data-action="undo-delete">撤销</button>` : ""}</p>` : ""}
@@ -509,6 +514,8 @@ function render() {
       ${renderMobileNav()}
     </div>
   `;
+  ui.pageTransition = false;
+  syncEntrySheetState();
   updateEntryPreview();
 }
 
@@ -518,6 +525,34 @@ function shouldShowSetupWizard() {
     && state.settings.regularHourlyRate === 0
     && state.settings.hourlyRate === DEFAULT_SETTINGS.hourlyRate
     && !state.settings._wizardDone;
+}
+
+function openEntrySheet() {
+  ui.entrySheetOpen = true;
+  ui.entrySheetVisible = false;
+  render();
+  window.requestAnimationFrame(() => {
+    ui.entrySheetVisible = true;
+    syncEntrySheetState();
+  });
+}
+
+function closeEntrySheet() {
+  ui.entrySheetVisible = false;
+  syncEntrySheetState();
+  window.setTimeout(() => {
+    if (ui.entrySheetVisible) return;
+    ui.entrySheetOpen = false;
+    ui.editingEntryId = "";
+    ui.entryError = "";
+    render();
+  }, 230);
+}
+
+function syncEntrySheetState() {
+  document.body.classList.toggle("entry-sheet-locked", ui.entrySheetOpen && isMobileViewport());
+  document.querySelector(".day-entry-panel")?.classList.toggle("is-entry-sheet-open", ui.entrySheetVisible);
+  document.querySelector(".entry-sheet-backdrop")?.classList.toggle("is-entry-sheet-open", ui.entrySheetVisible);
 }
 
 function renderSetupWizard() {
@@ -609,7 +644,7 @@ function renderSidebar() {
 }
 
 function renderMobileNav() {
-  const mainViews = ["calendar", "records", "reports"];
+  const mainViews = ["calendar", "records", "reports", "settings"];
   const isSubPage = !mainViews.includes(ui.view);
   if (isSubPage) {
     return `
@@ -739,6 +774,7 @@ function renderCalendarView() {
   const selectedEntries = entriesForDate(ui.selectedDate);
   const selectedAdjustments = adjustmentsForDate(ui.selectedDate);
   const useListView = isMobileViewport();
+  const mobilePanelHidden = useListView && !ui.entrySheetOpen;
   return `
     <div class="workspace calendar-layout">
       ${renderUnloggedPanel()}
@@ -753,8 +789,8 @@ function renderCalendarView() {
             </div>
           </section>`
       }
-      ${ui.entrySheetOpen ? `<button class="entry-sheet-backdrop" type="button" data-action="close-entry-sheet" aria-label="关闭登记面板"></button>` : ""}
-      <section class="detail-panel day-entry-panel ${ui.entrySheetOpen ? "is-entry-sheet-open" : ""}" aria-label="每日记录">
+      ${ui.entrySheetOpen ? `<button class="entry-sheet-backdrop ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" type="button" data-action="close-entry-sheet" aria-label="关闭登记面板"></button>` : ""}
+      <section class="detail-panel day-entry-panel ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" aria-label="每日记录" aria-hidden="${mobilePanelHidden ? "true" : "false"}" ${mobilePanelHidden ? "inert" : ""}>
         <div class="sheet-handle" aria-hidden="true"></div>
         <div class="panel-head">
           <div>
@@ -1338,24 +1374,16 @@ function renderRecordsView() {
 }
 
 function renderBulkPreview() {
-  const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
-  const start = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}-01`;
-  const end = formatDate(new Date(ui.year, ui.monthIndex + 1, 0));
   const availableAddKinds = bulkAddKindOptions();
-  const currentKind = availableAddKinds.some((item) => item.value === ui.bulkAddKind)
-    ? ui.bulkAddKind
+  const config = currentBulkDraft();
+  const preset = getShiftPreset(state.settings, config.presetId);
+  const currentKind = availableAddKinds.some((item) => item.value === config.addKind)
+    ? config.addKind
     : defaultBulkAddKind();
   ui.bulkAddKind = currentKind;
-  const addPreview = previewBulkAdd({
-    start,
-    end,
-    rule: "workdays",
-    presetId: preset?.id,
-    overwrite: false,
-    addKind: currentKind,
-    overtimeHours: 2
-  });
-  const deletePreview = previewBulkDelete({ start, end, deleteKind: "bulk" });
+  config.addKind = currentKind;
+  const addPreview = previewBulkAdd(config);
+  const deletePreview = previewBulkDelete(config);
   const bulkMode = ui.bulkMode || "add";
   return `
     <form id="bulk-form" class="bulk-tool" data-bulk-mode="${escapeAttr(bulkMode)}">
@@ -1369,22 +1397,22 @@ function renderBulkPreview() {
         <small>${bulkMode === "delete" ? "为了防误删，需要勾选确认批量删除。" : bulkAddKindDetail(currentKind)}</small>
       </div>
       <div class="form-grid">
-        ${field("开始", `<input name="start" type="date" value="${escapeAttr(start)}" required>`)}
-        ${field("结束", `<input name="end" type="date" value="${escapeAttr(end)}" required>`)}
+        ${field("开始", `<input name="start" type="date" value="${escapeAttr(config.start)}" required>`)}
+        ${field("结束", `<input name="end" type="date" value="${escapeAttr(config.end)}" required>`)}
       </div>
       ${bulkMode === "delete" ? `
         <div class="form-grid">
           ${field("删除范围", `
             <select name="deleteKind">
-              <option value="bulk">仅批量生成</option>
-              <option value="overtime">仅批量加班</option>
-              <option value="entries">全部工时记录</option>
-              <option value="adjustments">全部补扣记录</option>
-              <option value="all">工时和补扣都删</option>
+              ${option("bulk", "仅批量生成", config.deleteKind)}
+              ${option("overtime", "仅批量加班", config.deleteKind)}
+              ${option("entries", "全部工时记录", config.deleteKind)}
+              ${option("adjustments", "全部补扣记录", config.deleteKind)}
+              ${option("all", "工时和补扣都删", config.deleteKind)}
             </select>
           `)}
           <label class="check-row slim confirm-delete">
-            <input type="checkbox" name="confirmDelete" value="true">
+            <input type="checkbox" name="confirmDelete" value="true" ${config.confirmDelete ? "checked" : ""}>
             <span>确认批量删除</span>
           </label>
         </div>
@@ -1397,20 +1425,20 @@ function renderBulkPreview() {
           `)}
           ${field("添加规则", `
             <select name="rule">
-              <option value="workdays">仅工作日和调休上班</option>
-              <option value="all">每天都添加</option>
-              <option value="rest">只添加休息日/节假日</option>
+              ${option("workdays", "仅工作日和调休上班", config.rule)}
+              ${option("all", "每天都添加", config.rule)}
+              ${option("rest", "只添加休息日/节假日", config.rule)}
             </select>
           `)}
-          ${field("每天加班", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="2" inputmode="decimal">`)}
+          ${field("每天加班", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(config.overtimeHours)}" inputmode="decimal">`)}
           ${field("班次", `
             <select name="presetId">
-              ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
+              ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id || config.presetId)).join("")}
             </select>
           `)}
         </div>
         <label class="check-row slim">
-          <input type="checkbox" name="overwrite" value="true">
+          <input type="checkbox" name="overwrite" value="true" ${config.overwrite ? "checked" : ""}>
           <span>覆盖已有同类记录</span>
         </label>
       `}
@@ -1428,6 +1456,43 @@ function defaultBulkAddKind() {
   return [SALARY_MODES.REGULAR_OVERTIME, SALARY_MODES.BASE_OVERTIME].includes(state.settings.salaryMode)
     ? "monthlyBase"
     : "overtime";
+}
+
+function bulkDefaultConfig() {
+  const monthKey = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}`;
+  if (ui.bulkDraftMonth !== monthKey) {
+    ui.bulkDraftMonth = monthKey;
+    ui.bulkDraft = null;
+  }
+  const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
+  return {
+    start: `${monthKey}-01`,
+    end: formatDate(new Date(ui.year, ui.monthIndex + 1, 0)),
+    addKind: defaultBulkAddKind(),
+    rule: "workdays",
+    presetId: preset?.id || state.settings.defaultPresetId,
+    overtimeHours: 2,
+    overwrite: false,
+    deleteKind: "bulk",
+    confirmDelete: false
+  };
+}
+
+function currentBulkDraft() {
+  const defaults = bulkDefaultConfig();
+  const draft = { ...defaults, ...(ui.bulkDraft || {}) };
+  const availableKinds = bulkAddKindOptions().map((item) => item.value);
+  if (!availableKinds.includes(draft.addKind)) draft.addKind = defaults.addKind;
+  if (!["workdays", "all", "rest"].includes(draft.rule)) draft.rule = defaults.rule;
+  if (!["bulk", "overtime", "entries", "adjustments", "all"].includes(draft.deleteKind)) draft.deleteKind = defaults.deleteKind;
+  draft.overtimeHours = Number.isFinite(Number(draft.overtimeHours)) ? Number(draft.overtimeHours) : defaults.overtimeHours;
+  draft.overwrite = Boolean(draft.overwrite);
+  draft.confirmDelete = Boolean(draft.confirmDelete);
+  return draft;
+}
+
+function rememberBulkDraft(form) {
+  ui.bulkDraft = bulkConfigFromForm(form, { saveDraft: false });
 }
 
 function bulkAddKindOptions() {
@@ -1902,8 +1967,10 @@ function renderSettingsView() {
               </div>
             </form>
           </div>
-          ${settingsGroups.map((group) => `
-            <div class="settings-mobile-detail ${sheetGroup === group.id ? "is-visible" : ""}" data-settings-detail="${group.id}">
+          ${settingsGroups.map((group) => {
+            const isVisibleDetail = sheetGroup === group.id;
+            return `
+            <div class="settings-mobile-detail ${isVisibleDetail ? "is-visible" : ""}" data-settings-detail="${group.id}" aria-hidden="${isVisibleDetail ? "false" : "true"}" ${isVisibleDetail ? "" : "inert"}>
               <div class="settings-detail-header">
                 <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -1918,7 +1985,8 @@ function renderSettingsView() {
                 </div>
               </form>
             </div>
-          `).join("")}
+          `;
+          }).join("")}
         </section>
       </div>
     `;
@@ -2117,7 +2185,10 @@ function saveEntryObject(entry, notice, options = {}) {
   ui.editingEntryId = "";
   ui.entryIntent = "";
   ui.entryError = "";
-  if (isMobileViewport()) ui.entrySheetOpen = false;
+  if (isMobileViewport()) {
+    ui.entrySheetOpen = false;
+    ui.entrySheetVisible = false;
+  }
   persist(validation.warnings[0] ? `${notice}，${validation.warnings[0]}` : notice);
   render();
   return true;
@@ -2166,13 +2237,23 @@ function saveAdjustment(form) {
 }
 
 function saveSettings(form) {
+  const draft = settingsFromForm(form);
+  state.settings = draft.settings;
+  state.cloud = draft.cloud;
+  ui.settingsSheetOpen = "";
+  persist("已保存设置");
+  render();
+}
+
+function settingsFromForm(form) {
   const data = Object.fromEntries(new FormData(form));
   const next = mergeSettings(state.settings);
   const nextCloud = { ...(state.cloud || {}) };
-  const hasWorkweek = Object.keys(data).some((k) => k.startsWith("workweek."));
-  const hasPresets = Object.keys(data).some((k) => k.startsWith("shiftPresets."));
-  const hasAutoAdj = Object.keys(data).some((k) => k === "autoAdjustment.enabled");
-  const hasAutoFill = Object.keys(data).some((k) => k === "autoFillWorkday");
+  const hasWorkweek = Boolean(form.querySelector('[name^="workweek."]'));
+  const hasPresets = Boolean(form.querySelector('[name^="shiftPresets."]'));
+  const hasAutoAdj = Boolean(form.querySelector('[name="autoAdjustment.enabled"]'));
+  const hasAutoFill = Boolean(form.querySelector('[name="autoFillWorkday"]'));
+  const hasRestCycleMode = Boolean(form.querySelector('[name="restCycle.mode"]'));
   if (hasWorkweek) next.workweek = [];
   if (hasPresets) next.shiftPresets = [];
   if (hasAutoAdj) next.autoAdjustment.enabled = false;
@@ -2201,24 +2282,24 @@ function saveSettings(form) {
       next.autoFillWorkday = true;
       continue;
     }
+    if (key === "workType") continue;
     setDeep(next, key, value === "" ? 0 : Number.isNaN(Number(value)) ? value : Number(value));
   }
-  if (next.restCycle.mode === REST_CYCLE_MODES.DOUBLE_WEEKEND) {
+  if (hasRestCycleMode && next.restCycle.mode === REST_CYCLE_MODES.DOUBLE_WEEKEND) {
     next.workweek = [1, 2, 3, 4, 5];
     next.restCycle.workDays = 5;
     next.restCycle.restDays = 2;
   }
-  if (next.restCycle.mode === REST_CYCLE_MODES.SINGLE_SUNDAY) {
+  if (hasRestCycleMode && next.restCycle.mode === REST_CYCLE_MODES.SINGLE_SUNDAY) {
     next.workweek = [1, 2, 3, 4, 5, 6];
     next.restCycle.workDays = 6;
     next.restCycle.restDays = 1;
   }
-  if (!next.workweek.length) next.workweek = DEFAULT_SETTINGS.workweek;
-  state.settings = limitSettings(next);
-  state.cloud = normalizeCloudConfig(nextCloud);
-  ui.settingsSheetOpen = "";
-  persist("已保存设置");
-  render();
+  if (hasWorkweek && !next.workweek.length) next.workweek = DEFAULT_SETTINGS.workweek;
+  return {
+    settings: limitSettings(next),
+    cloud: normalizeCloudConfig(nextCloud)
+  };
 }
 
 function saveSetupWizard(form) {
@@ -2246,8 +2327,8 @@ function saveSetupWizard(form) {
   render();
 }
 
-async function handleCloudAction(action) {
-  const auth = cloudConfigFromForm();
+async function handleCloudAction(action, sourceTarget = null) {
+  const auth = cloudConfigFromForm(sourceTarget);
   if (!auth.userId || !auth.password) {
     persist("请填写云备份账号和密码");
     render();
@@ -2308,6 +2389,7 @@ function cloudErrorMessage(action, message, status) {
   if (message.includes("账号或密码不正确")) return "账号或密码不正确，请检查后重试";
   if (message.includes("已停用")) return "账号已停用，暂时无法使用云备份";
   if (message.includes("已有更新")) return "云端已有新数据，请先恢复或重新登录后再备份";
+  if (message.includes("登录信息")) return message;
   if (message.includes("安全密钥")) return "云备份安全配置异常，请联系管理员";
   if (message.includes("超过")) return "数据量过大，请先导出本地备份或清理历史记录";
   if (status === 401) return action === "register" ? "注册失败，请更换账号名" : "登录失败，请检查账号和密码";
@@ -2317,8 +2399,10 @@ function cloudErrorMessage(action, message, status) {
   return message;
 }
 
-function cloudConfigFromForm() {
-  const form = document.querySelector("#settings-form");
+function cloudConfigFromForm(sourceTarget = null) {
+  const form = sourceTarget?.closest?.("form")
+    || document.querySelector(".cloud-sync-card")?.closest("form")
+    || document.querySelector("#settings-form");
   const data = form ? Object.fromEntries(new FormData(form)) : {};
   const cloud = normalizeCloudConfig({
     ...(state.cloud || {}),
@@ -2840,21 +2924,24 @@ function updateBulkPreview() {
     : (config.overwrite ? "已打开覆盖，只会按当前添加方式替换同类记录。" : bulkAddKindDetail(config.addKind));
 }
 
-function bulkConfigFromForm(form) {
+function bulkConfigFromForm(form, options = {}) {
   const data = Object.fromEntries(new FormData(form));
+  const defaults = bulkDefaultConfig();
   const availableKinds = bulkAddKindOptions().map((item) => item.value);
-  const addKind = availableKinds.includes(data.addKind) ? data.addKind : defaultBulkAddKind();
-  return {
-    start: data.start || `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}-01`,
-    end: data.end || formatDate(new Date(ui.year, ui.monthIndex + 1, 0)),
+  const addKind = availableKinds.includes(data.addKind) ? data.addKind : defaults.addKind;
+  const config = {
+    start: data.start || defaults.start,
+    end: data.end || defaults.end,
     addKind,
-    rule: data.rule || (addKind === "monthlyBase" ? "workdays" : "workdays"),
-    presetId: data.presetId || state.settings.defaultPresetId,
+    rule: data.rule || defaults.rule,
+    presetId: data.presetId || defaults.presetId,
     overtimeHours: Number(data.overtimeHours || 0),
     overwrite: data.overwrite === "true",
     deleteKind: data.deleteKind || "bulk",
     confirmDelete: data.confirmDelete === "true"
   };
+  if (options.saveDraft !== false) ui.bulkDraft = config;
+  return config;
 }
 
 function previewBulkAdd(config) {
