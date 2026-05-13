@@ -1,15 +1,16 @@
-const CACHE_NAME = "worktimeapp-v18";
+const CACHE_NAME = "worktimeapp-v19";
+const ASSET_VERSION = "v=0.2.7";
 const ASSETS = [
   "./",
   "./index.html",
   "./admin.html",
   "./changelog.html",
-  "./styles.css",
-  "./src/app.js",
-  "./src/calculations.js",
-  "./src/export.js",
-  "./src/storage.js",
-  "./manifest.webmanifest",
+  `./styles.css?${ASSET_VERSION}`,
+  `./src/app.js?${ASSET_VERSION}`,
+  `./src/calculations.js?${ASSET_VERSION}`,
+  `./src/export.js?${ASSET_VERSION}`,
+  `./src/storage.js?${ASSET_VERSION}`,
+  `./manifest.webmanifest?${ASSET_VERSION}`,
   "./assets/icon.svg",
   "./assets/social-icons.svg"
 ];
@@ -30,6 +31,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith("/api/")) return;
   event.respondWith(
     fetch(event.request).then((response) => {
       const copy = response.clone();

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.7 - 2026-05-13
+
+### Fixed
+
+- 修复部分设备发布后仍显示 `v0.2.5` 的问题：入口 HTML 的样式、主脚本和模块导入都加入 `v=0.2.7` 版本参数，绕开旧浏览器缓存和旧 Service Worker 缓存。
+- Service Worker 注册改为 `./sw.js?v=0.2.7` 并使用 `updateViaCache: "none"`，主动检查新 Worker。
+- Service Worker 缓存名更新到 `worktimeapp-v19`，并跳过 `/api/` 请求，避免云同步接口被离线缓存逻辑接管。
+- 独立 `changelog.html` 补齐 v0.2.5、v0.2.6 和 v0.2.7 时间轴条目。
+
 ## v0.2.6 - 2026-05-13
 
 ### Fixed

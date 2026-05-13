@@ -18,6 +18,20 @@
 - 后续建议：
 ```
 
+## 2026-05-13 09:10 CST - v0.2.7 旧缓存导致版本不生效修复
+
+- 触发原因：用户反馈 GitHub Release 已发布但线上仍显示 `v0.2.5`，要求检查是不是哪里没生效。
+- 修改文件：`index.html`、`admin.html`、`src/app.js`、`sw.js`、`changelog.html`、`package.json`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - `index.html` 的 `manifest.webmanifest`、`styles.css`、`src/app.js` 加入 `v=0.2.7` 参数，强制浏览器请求新版入口资源。
+  - `src/app.js` 的 `calculations.js`、`storage.js`、`export.js` 模块导入加入 `v=0.2.7`，避免主模块更新而依赖模块继续走旧缓存。
+  - Service Worker 注册改为 `./sw.js?v=0.2.7` 并设置 `updateViaCache: "none"`；`sw.js` 缓存名更新到 `worktimeapp-v19`。
+  - Service Worker 对 `/api/` 请求直接放行，不再进入离线缓存逻辑。
+  - `changelog.html` 补齐 v0.2.5、v0.2.6、v0.2.7 时间轴内容。
+- 验证结果：`npm test` 36 项通过；`npm run build` 成功输出 `dist/`；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`admin.html` 内联脚本解析通过；`git diff --check` 通过；本地与 `dist/` 均确认入口引用 `src/app.js?v=0.2.7`、样式引用 `styles.css?v=0.2.7`、Service Worker 注册 `sw.js?v=0.2.7`，缓存名为 `worktimeapp-v19`。
+- 风险/注意：如果用户设备已经由旧 Service Worker 控制，首次打开可能仍需刷新一次；但新版入口资源带版本参数后，后续更新会更稳定。
+- 后续建议：发布后用 `curl https://time.yuan6.cn/` 检查入口是否含 `src/app.js?v=0.2.7`，用 `curl https://time.yuan6.cn/src/app.js?v=0.2.7` 检查 `APP_VERSION = "v0.2.7"`。
+
 ## 2026-05-13 08:55 CST - v0.2.6 批量登记与移动端抽屉修复
 
 - 触发原因：用户反馈批量处理无法批量添加工时，期望每月自动登记基础工作日 8 小时、只有加班才额外登记；同时指出侧边栏底部溢出、移动端无页脚、管理员登录页页脚奇怪、移动日历压缩严重、手机版日期登记不够像 App，并要求检查已部署的 `time.yuan6.cn`。

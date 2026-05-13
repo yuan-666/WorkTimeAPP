@@ -315,6 +315,48 @@
         <div class="timeline" aria-label="版本时间轴">
           <article class="item">
             <span class="index">01</span>
+            <span class="version">v0.2.7</span>
+            <div class="content">
+              <h2>缓存穿透与版本生效修复</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>入口脚本、样式、模块导入和 Service Worker 注册都加入版本参数，避免旧 PWA 缓存继续显示上一版。</li>
+                <li>Service Worker 缓存升级到 v19，并跳过云同步 API 请求，减少接口被缓存干扰的风险。</li>
+                <li>更新独立时间轴日志，确保侧边栏和日志页面显示同一版本。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">02</span>
+            <span class="version">v0.2.6</span>
+            <div class="content">
+              <h2>批量登记与移动端抽屉</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>批量添加新增补齐基础工时 8h、批量登记加班和按班次模板添加。</li>
+                <li>已有加班记录时仍可补齐基础工时，底薪+加班不会重复计算底薪。</li>
+                <li>移动端点击日期会弹出底部登记抽屉，日历保持完整 7 列宽度并横向滚动。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">03</span>
+            <span class="version">v0.2.5</span>
+            <div class="content">
+              <h2>部署、安全云备份与侧边栏收口</h2>
+              <span class="date">2026-05-13</span>
+              <ul>
+                <li>新增 `npm run build`，静态输出到 dist，方便部署到阿里云 ESA Pages。</li>
+                <li>云端 RSA 私钥键名统一为 RSA_key，管理员后台独立为 admin.html。</li>
+                <li>版权、动态日志、GitHub 和博客友情链接统一放到底部区域。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">04</span>
             <span class="version">v0.2.4</span>
             <div class="content">
               <h2>底部动态日志与版权外链</h2>
@@ -328,7 +370,7 @@
           </article>
 
           <article class="item">
-            <span class="index">02</span>
+            <span class="index">05</span>
             <span class="version">v0.2.3</span>
             <div class="content">
               <h2>独立后台与安全云备份</h2>
@@ -343,7 +385,7 @@
           </article>
 
           <article class="item">
-            <span class="index">03</span>
+            <span class="index">06</span>
             <span class="version">v0.2.2</span>
             <div class="content">
               <h2>输入、主题与时间轴更新日志</h2>
@@ -358,7 +400,7 @@
           </article>
 
           <article class="item">
-            <span class="index">04</span>
+            <span class="index">07</span>
             <span class="version">v0.2.1</span>
             <div class="content">
               <h2>云同步、后台与真实排班</h2>
@@ -372,7 +414,7 @@
           </article>
 
           <article class="item">
-            <span class="index">05</span>
+            <span class="index">08</span>
             <span class="version">v0.2.0</span>
             <div class="content">
               <h2>数据可视化与深色适配</h2>
@@ -386,7 +428,7 @@
           </article>
 
           <article class="item">
-            <span class="index">06</span>
+            <span class="index">09</span>
             <span class="version">v0.1.8</span>
             <div class="content">
               <h2>未补登工作日</h2>
@@ -399,7 +441,7 @@
           </article>
 
           <article class="item">
-            <span class="index">07</span>
+            <span class="index">10</span>
             <span class="version">v0.1.7</span>
             <div class="content">
               <h2>首次使用向导</h2>
@@ -412,7 +454,7 @@
           </article>
 
           <article class="item">
-            <span class="index">08</span>
+            <span class="index">11</span>
             <span class="version">v0.1.6</span>
             <div class="content">
               <h2>每日登记交互优化</h2>
@@ -425,7 +467,7 @@
           </article>
 
           <article class="item">
-            <span class="index">09</span>
+            <span class="index">12</span>
             <span class="version">v0.1.0</span>
             <div class="content">
               <h2>PWA 基础版本</h2>
