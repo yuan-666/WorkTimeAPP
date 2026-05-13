@@ -42,9 +42,11 @@ async function handleCloud(request, env, url) {
   const client = getClientInfo(request);
   const key = userKey(userId);
   const existing = await readRecord(kv, key);
+  const keyMaterial = await readPasswordKeyMaterial(kv).catch(() => null);
+  if (!keyMaterial) return json({ error: "云端安全密钥未配置" }, 500);
 
   if (action === "register") {
-    const password = await decryptPasswordPayload(kv, payload);
+    const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
     if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
     if (existing) return json({ error: "该账号已存在，请直接登录" }, 409);
     const data = sanitizeData(payload.data);
@@ -69,21 +71,21 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, record);
     await updateUserIndex(kv, userId, record);
     await recordUsage(kv, "register", client, userId);
-    return json({ ...publicRecord(record), ...(await userSessionResponse(kv, userId)) });
+    return json({ ...publicRecord(record), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
 
   if (!existing) {
     await recordUsage(kv, "login_failed", client, userId);
     return json({ error: "账号或密码不正确" }, 401);
   }
-  const session = action === "login" ? null : await verifyUserSession(request, kv, payload.sessionToken);
+  const session = action === "login" ? null : await verifyUserSession(request, kv, payload.sessionToken, keyMaterial);
   if (session && session.sub !== userId) {
     await recordUsage(kv, "login_failed", client, userId);
     return json({ error: "登录信息已过期，请重新登录" }, 401);
   }
   if (!session) {
     if (!payload.passwordCipher) return json({ error: "登录信息已过期，请重新登录" }, 401);
-    const password = await decryptPasswordPayload(kv, payload);
+    const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
     if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
     const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
     if (!verified) {
@@ -97,12 +99,12 @@ async function handleCloud(request, env, url) {
 
   if (action === "login") {
     await recordUsage(kv, "login", client, userId);
-    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId)) });
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
 
   if (action === "pull") {
     await recordUsage(kv, "pull", client, userId);
-    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId)), data: touched.data || null });
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)), data: touched.data || null });
   }
 
   if (action === "push") {
@@ -125,7 +127,7 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, next);
     await updateUserIndex(kv, userId, next);
     await recordUsage(kv, "push", client, userId);
-    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId)) });
+    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
 
   return json({ error: "未知操作" }, 400);
@@ -304,10 +306,11 @@ async function publicPasswordKey(kv) {
   };
 }
 
-async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher") {
+async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher", keyMaterial = null) {
   const ciphertext = String(payload[fieldName] || "");
   if (!ciphertext) throw httpError("请使用最新版应用进行安全登录", 400);
-  const { jwk } = await readPasswordKeyMaterial(kv);
+  const km = await readPasswordKeyMaterial(kv, keyMaterial);
+  const { jwk } = km;
   let key;
   try {
     key = await crypto.subtle.importKey(
@@ -339,7 +342,8 @@ async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher")
   return new TextDecoder().decode(decrypted);
 }
 
-async function readPasswordKeyMaterial(kv) {
+async function readPasswordKeyMaterial(kv, cached = null) {
+  if (cached) return cached;
   const value = await readRecord(kv, PASSWORD_PRIVATE_KEY);
   const jwk = normalizePrivateJwk(value);
   if (!jwk) throw new Error("云端安全密钥未配置");
@@ -403,14 +407,14 @@ async function signAdminSession(kv, username) {
   return `${body}.${signature}`;
 }
 
-async function userSessionResponse(kv, userId) {
+async function userSessionResponse(kv, userId, keyMaterial = null) {
   return {
-    sessionToken: await signUserSession(kv, userId),
+    sessionToken: await signUserSession(kv, userId, keyMaterial),
     tokenExpiresAt: new Date(Date.now() + USER_SESSION_TTL_SECONDS * 1000).toISOString()
   };
 }
 
-async function signUserSession(kv, userId) {
+async function signUserSession(kv, userId, keyMaterial = null) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: userId,
@@ -419,7 +423,7 @@ async function signUserSession(kv, userId) {
     exp: now + USER_SESSION_TTL_SECONDS
   };
   const body = base64UrlText(JSON.stringify(payload));
-  const signature = await hmacSign(kv, body);
+  const signature = await hmacSign(kv, body, keyMaterial);
   return `${body}.${signature}`;
 }
 
@@ -441,12 +445,12 @@ async function verifyAdminSession(request, kv) {
   return payload;
 }
 
-async function verifyUserSession(request, kv, fallbackToken = "") {
+async function verifyUserSession(request, kv, fallbackToken = "", keyMaterial = null) {
   const header = request.headers.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : String(fallbackToken || "");
   const [body, signature] = token.split(".");
   if (!body || !signature) return null;
-  const expected = await hmacSign(kv, body);
+  const expected = await hmacSign(kv, body, keyMaterial);
   if (!constantTimeEqual(signature, expected)) return null;
   let payload;
   try {
@@ -460,9 +464,9 @@ async function verifyUserSession(request, kv, fallbackToken = "") {
   return payload;
 }
 
-async function hmacSign(kv, value) {
-  const { raw } = await readPasswordKeyMaterial(kv);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+async function hmacSign(kv, value, keyMaterial = null) {
+  const km = await readPasswordKeyMaterial(kv, keyMaterial);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(km.raw));
   const key = await crypto.subtle.importKey(
     "raw",
     digest,
