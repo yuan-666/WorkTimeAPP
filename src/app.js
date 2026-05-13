@@ -30,21 +30,21 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.2.8";
+} from "./calculations.js?v=0.2.9";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.2.8";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.8";
+} from "./storage.js?v=0.2.9";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.9";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.2.8";
-const RELEASE_COUNT = 18;
+const APP_VERSION = "v0.2.9";
+const RELEASE_COUNT = 19;
 const CLOUD_API_BASE = "/api/cloud";
 let state = loadState();
 let ui = {
@@ -473,7 +473,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.8", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.9", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.

@@ -18,6 +18,20 @@
 - 后续建议：
 ```
 
+## 2026-05-13 19:00 CST - v0.2.9 bug 修复：班次切换和设置保存
+
+- 触发原因：用户反馈班次管理无法切换上班方式、设置详情页操作异常。
+- 修改文件：`src/app.js`、`index.html`、`package.json`、`sw.js`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`README.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - workType change handler 的 `settingsForm` 选择器改为同时匹配 `#settings-form` 和 `.settings-detail-form`。
+  - workType 切换改用 `updatePresetEditor()` 局部更新，不再调用 `render()`。
+  - `saveSettings` 只在表单实际包含对应字段时才重置 workweek/presets/autoFill/autoAdjustment。
+  - `saveSettings` 保存后重置 `ui.settingsSheetOpen` 回到列表视图。
+  - 薪资模式切换仅桌面端调用 `render()`。
+- 验证结果：`npm test` 41 项通过；所有语法检查通过；`npm run build` 成功。
+- 风险/注意：无。
+- 后续建议：后续 bug 修复版本使用最小版本号（如 v0.2.10、v0.2.11）。
+
 ## 2026-05-13 18:00 CST - v0.2.8 发布：批量添加修复、自动工时、手机二级页面
 
 - 触发原因：用户反馈批量添加仍然报错"Form submission canceled"、班次管理加班班次丢失、设置页不是二级页面、版本日志需要完善后发布到 GitHub。

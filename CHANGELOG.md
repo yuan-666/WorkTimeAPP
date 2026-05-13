@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.9 - 2026-05-13
+
+### Fixed
+
+- 修复班次管理无法切换上班方式的问题：`settingsForm` 选择器改为同时匹配 `#settings-form` 和 `.settings-detail-form`，使 workType 的 change handler 在详情页中正确触发。
+- 修复切换上班方式后全页闪烁重渲染：改用 `updatePresetEditor()` 直接更新编辑器 DOM，不再调用 `render()`。
+- 修复设置详情页保存后丢失其他设置的问题：`saveSettings` 只在表单实际包含 `workweek`/`shiftPresets`/`autoFill`/`autoAdjustment` 字段时才重置对应值。
+- 修复设置详情页保存后不返回列表的问题：`saveSettings` 在保存后重置 `ui.settingsSheetOpen`。
+- 修复薪资模式切换在移动端触发全页重渲染：仅桌面端调用 `render()`。
+
 ## v0.2.8 - 2026-05-13
 
 ### Fixed
