@@ -247,13 +247,24 @@ document.addEventListener("click", async (event) => {
   }
 
   if (action === "close-settings-sheet") {
+    const container = target.closest(".detail-panel") || document;
+    const list = container.querySelector(".settings-mobile-list");
+    const details = container.querySelectorAll(".settings-mobile-detail");
+    if (list) list.classList.remove("is-hidden");
+    details.forEach((d) => d.classList.remove("is-visible"));
     ui.settingsSheetOpen = "";
-    render();
+    return;
   }
 
   if (action === "open-settings-sheet") {
-    ui.settingsSheetOpen = target.dataset.group || "";
-    render();
+    const group = target.dataset.group;
+    const container = target.closest(".detail-panel") || document;
+    const list = container.querySelector(".settings-mobile-list");
+    const detail = container.querySelector(`[data-settings-detail="${group}"]`);
+    if (list) list.classList.add("is-hidden");
+    if (detail) detail.classList.add("is-visible");
+    ui.settingsSheetOpen = group;
+    return;
   }
 
   if (action === "toggle-entry-advanced") {
@@ -333,9 +344,11 @@ document.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
   const formId = form.getAttribute("id");
+  const formClass = form.className;
   if (formId === "entry-form") saveEntry(form, event.submitter?.value);
   if (formId === "adjustment-form") saveAdjustment(form);
   if (formId === "settings-form") saveSettings(form);
+  if (formClass.includes("settings-detail-form")) saveSettings(form);
   if (formId === "setup-form") saveSetupWizard(form);
 });
 
@@ -764,47 +777,54 @@ function renderCalendarView() {
 }
 
 function renderCalendarListView(days, entriesByDate, adjustmentsByDate) {
-  const inMonthDays = days.filter((day) => day.inMonth);
-  const items = inMonthDays.map((day) => {
-    const entries = entriesByDate.get(day.date) || [];
-    const adjustments = adjustmentsByDate.get(day.date) || [];
-    const normalized = entries.map((entry) => normalizeEntry(entry, state.settings));
-    const hours = round2(normalized.reduce((sum, entry) => sum + entry.totalHours, 0));
-    const pay = round2(entries.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
-    const dayType = inferDayType(day.date, state.settings);
-    const holiday = day.holiday || getHolidayInfo(day.date);
-    const marker = holiday?.marker || (dayType === "restday" ? "休" : "");
-    const isAutoFilled = state.settings.autoFillWorkday && !entries.length && dayType === "workday" && day.date <= today;
-    const isSelected = day.date === ui.selectedDate;
-    const isToday = day.date === today;
-    const dateObj = new Date(`${day.date}T00:00:00`);
-    const weekday = weekLabelByIndex(dateObj.getDay());
-    const dayNum = Number(day.date.slice(8, 10));
-    const typeClass = dayType === "holiday" ? "is-holiday" : (dayType === "restday" ? "is-restday" : "");
-    const hasData = hours > 0 || isAutoFilled;
+  const weeks = [];
+  for (let i = 0; i < days.length; i += 7) {
+    weeks.push(days.slice(i, i + 7));
+  }
+  const weekdayHeaders = weekdayOrder(state.settings.weekStart);
+  const html = weeks.map((weekDays) => {
+    const weekStart = weekDays[0]?.date || "";
+    const isCurrentWeek = weekDays.some((d) => d.date === today);
+    let weekHours = 0;
+    let weekPay = 0;
+    const cells = weekDays.map((day) => {
+      const entries = entriesByDate.get(day.date) || [];
+      const normalized = entries.map((e) => normalizeEntry(e, state.settings));
+      const hours = round2(normalized.reduce((sum, e) => sum + e.totalHours, 0));
+      const pay = round2(entries.reduce((sum, e) => sum + calculateEntryPay(e, state.settings).totalPay, 0));
+      const dayType = inferDayType(day.date, state.settings);
+      const holiday = day.holiday || getHolidayInfo(day.date);
+      const marker = holiday?.marker || (dayType === "restday" ? "休" : "");
+      const isAutoFilled = state.settings.autoFillWorkday && !entries.length && dayType === "workday" && day.date <= today;
+      const isSelected = day.date === ui.selectedDate;
+      const isToday = day.date === today;
+      const dayNum = Number(day.date.slice(8, 10));
+      const typeClass = dayType === "holiday" ? "is-holiday" : (dayType === "restday" ? "is-restday" : "");
+      const hasData = hours > 0 || isAutoFilled;
+      const displayHours = hours || (isAutoFilled ? state.settings.normalHoursPerDay : 0);
+      weekHours += displayHours;
+      weekPay += pay || (isAutoFilled ? calculateEntryPay({ date: day.date, recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: state.settings.normalHoursPerDay, overtimeHours: 0, totalHours: state.settings.normalHoursPerDay }, state.settings).totalPay : 0);
+      return `
+        <button class="mcal-cell ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""} ${typeClass} ${hasData ? "has-data" : ""} ${!day.inMonth ? "is-muted" : ""}" type="button" data-date="${day.date}">
+          <span class="mcal-num">${dayNum}</span>
+          ${marker ? `<span class="mcal-marker">${escapeHtml(marker)}</span>` : ""}
+          ${isAutoFilled ? `<span class="mcal-marker auto">默</span>` : ""}
+          ${displayHours ? `<span class="mcal-hours">${displayHours}h</span>` : ""}
+          ${pay ? `<span class="mcal-pay">${money(pay)}</span>` : ""}
+        </button>
+      `;
+    }).join("");
     return `
-      <button class="calendar-list-item ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""} ${typeClass} ${hasData ? "has-data" : ""}" type="button" data-date="${day.date}">
-        <div class="list-date">
-          <strong>${dayNum}</strong>
-          <span>周${weekday}</span>
-        </div>
-        <div class="list-info">
-          ${holiday ? `<b class="list-tag holiday-tag">${escapeHtml(holiday.name)}</b>` : ""}
-          ${holiday?.adjusted ? `<b class="list-tag adjust-tag">调休上班</b>` : ""}
-          ${marker && !holiday ? `<b class="list-tag">${escapeHtml(marker)}</b>` : ""}
-          ${entries.length ? `<span class="list-entries">${entries.length} 条记录</span>` : ""}
-          ${isAutoFilled ? `<b class="list-tag auto-tag">默认 ${state.settings.normalHoursPerDay}h</b>` : ""}
-        </div>
-        <div class="list-numbers">
-          <strong>${hours ? `${hours}h` : (isAutoFilled ? `${state.settings.normalHoursPerDay}h` : "—")}</strong>
-          <span>${pay ? money(pay) : ""}</span>
-        </div>
-      </button>
+      <div class="mcal-week ${isCurrentWeek ? "is-current" : ""}">
+        <div class="mcal-weekdays">${weekdayHeaders.map((d) => `<span>${weekLabelByIndex(d)}</span>`).join("")}</div>
+        <div class="mcal-row">${cells}</div>
+        <div class="mcal-week-sum"><span>${round2(weekHours)}h</span><span>${money(weekPay)}</span></div>
+      </div>
     `;
   }).join("");
   return `
-    <section class="calendar-panel calendar-list-panel" aria-label="日历列表">
-      <div class="calendar-list">${items}</div>
+    <section class="calendar-panel mcal-panel" aria-label="日历">
+      ${html}
     </section>
   `;
 }
@@ -1847,60 +1867,58 @@ function renderSettingsView() {
   const groupBodies = { salary: salaryBody, overtime: overtimeBody, goals: goalsBody, shifts: shiftsBody, workdays: workdaysBody, adjustment: adjustmentBody, tax: taxBody, display: displayBody, data: dataBody, about: aboutBody };
 
   if (isMobile) {
-    const activeGroup = settingsGroups.find((g) => g.id === sheetGroup);
-    if (activeGroup) {
-      return `
-        <div class="workspace settings-layout">
-          <section class="detail-panel settings-detail-page">
-            <div class="settings-detail-header">
-              <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-              </button>
-              <h2>${escapeHtml(activeGroup.title)}</h2>
-              <span></span>
-            </div>
-            <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
-              ${groupBodies[activeGroup.id]}
-              <div class="settings-detail-save">
-                <button class="primary-button" type="submit">保存</button>
-              </div>
-            </form>
-          </section>
-        </div>
-      `;
-    }
+    const hasDetail = Boolean(sheetGroup);
     return `
       <div class="workspace settings-layout">
         <section class="detail-panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">规则</p>
-              <h2>薪资设置</h2>
-            </div>
-          </div>
-          <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
-            <div class="insight-panel">
+          <div class="settings-mobile-list ${hasDetail ? "is-hidden" : ""}">
+            <div class="panel-head">
               <div>
-                <span>自动推算</span>
-                <strong>正班 ${money(insights.regularHourlyRate)} / 小时 ${money(insights.rates.hourlyRate)}</strong>
+                <p class="eyebrow">规则</p>
+                <h2>薪资设置</h2>
               </div>
-              <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪。`}</p>
             </div>
-            <div class="settings-mobile-menu">
-              ${settingsGroups.map((group) => `
-                <button class="settings-menu-item" type="button" data-action="open-settings-sheet" data-group="${group.id}">
-                  <div>
-                    <strong>${escapeHtml(group.title)}</strong>
-                    <span>${escapeHtml(group.summary)}</span>
-                  </div>
-                  <span class="settings-menu-arrow">›</span>
+            <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
+              <div class="insight-panel">
+                <div>
+                  <span>自动推算</span>
+                  <strong>正班 ${money(insights.regularHourlyRate)} / 小时 ${money(insights.rates.hourlyRate)}</strong>
+                </div>
+                <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪。`}</p>
+              </div>
+              <div class="settings-mobile-menu">
+                ${settingsGroups.map((group) => `
+                  <button class="settings-menu-item" type="button" data-action="open-settings-sheet" data-group="${group.id}">
+                    <div>
+                      <strong>${escapeHtml(group.title)}</strong>
+                      <span>${escapeHtml(group.summary)}</span>
+                    </div>
+                    <span class="settings-menu-arrow">›</span>
+                  </button>
+                `).join("")}
+              </div>
+              <div class="settings-mobile-save">
+                <button class="primary-button" type="submit">保存全部设置</button>
+              </div>
+            </form>
+          </div>
+          ${settingsGroups.map((group) => `
+            <div class="settings-mobile-detail ${sheetGroup === group.id ? "is-visible" : ""}" data-settings-detail="${group.id}">
+              <div class="settings-detail-header">
+                <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
-              `).join("")}
+                <h2>${escapeHtml(group.title)}</h2>
+                <span></span>
+              </div>
+              <form class="tool-form settings-detail-form" data-settings-group="${group.id}" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
+                ${groupBodies[group.id]}
+                <div class="settings-detail-save">
+                  <button class="primary-button" type="submit">保存</button>
+                </div>
+              </form>
             </div>
-            <div class="settings-mobile-save">
-              <button class="primary-button" type="submit">保存全部设置</button>
-            </div>
-          </form>
+          `).join("")}
         </section>
       </div>
     `;

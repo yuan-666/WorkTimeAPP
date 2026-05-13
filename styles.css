@@ -1789,8 +1789,26 @@ output {
 }
 
 /* Settings detail page (mobile secondary page) */
-.settings-detail-page {
-  animation: pageIn 200ms ease;
+.settings-mobile-list {
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+.settings-mobile-list.is-hidden {
+  display: none;
+}
+
+.settings-mobile-detail {
+  display: none;
+  animation: slideIn 200ms ease;
+}
+
+.settings-mobile-detail.is-visible {
+  display: block;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 .settings-detail-header {
@@ -2658,125 +2676,131 @@ output {
   font-variant-numeric: tabular-nums;
 }
 
-/* ===== 日历列表视图（移动端） ===== */
-.calendar-list-panel {
+/* ===== 日历周格视图（移动端） ===== */
+.mcal-panel {
   padding: 8px;
+  display: grid;
+  gap: 6px;
 }
 
-.calendar-list {
-  display: grid;
-  gap: 4px;
-}
-
-.calendar-list-item {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  padding: 8px 10px;
+.mcal-week {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-  color: var(--ink);
-  text-align: left;
-  transition: border-color 150ms, background 150ms;
+  overflow: hidden;
 }
 
-.calendar-list-item.is-selected {
+.mcal-week.is-current {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.mcal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.mcal-weekdays span {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.mcal-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  padding: 4px;
+}
+
+.mcal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-height: 48px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.mcal-cell.is-muted {
+  opacity: 0.35;
+}
+
+.mcal-cell.is-selected {
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.calendar-list-item.is-today .list-date strong {
+.mcal-cell.is-today .mcal-num {
   color: var(--accent);
+  font-weight: 800;
 }
 
-.calendar-list-item.has-data {
+.mcal-cell.has-data {
   background: var(--surface-soft);
 }
 
-.calendar-list-item.is-holiday {
-  border-color: rgba(191, 111, 47, 0.28);
+.mcal-cell.is-holiday {
   background: var(--holiday-soft);
 }
 
-.calendar-list-item.is-restday {
+.mcal-cell.is-restday {
   background: var(--surface-rest);
 }
 
-.list-date {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-}
-
-.list-date strong {
-  font-size: 18px;
-  font-weight: 800;
+.mcal-num {
+  font-size: 14px;
+  font-weight: 700;
   line-height: 1;
 }
 
-.list-date span {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.list-info {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.list-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--surface-2);
-  color: var(--muted);
-}
-
-.list-tag.holiday-tag {
-  background: rgba(191, 111, 47, 0.12);
+.mcal-marker {
+  font-size: 9px;
+  font-weight: 700;
   color: var(--accent-2);
+  line-height: 1;
 }
 
-.list-tag.adjust-tag {
-  border: 1px dashed rgba(191, 111, 47, 0.3);
-  color: var(--accent-2);
-}
-
-.list-tag.auto-tag {
-  background: rgba(23, 107, 91, 0.1);
+.mcal-marker.auto {
   color: var(--accent);
 }
 
-.list-entries {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.list-numbers {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-}
-
-.list-numbers strong {
-  font-size: 15px;
+.mcal-hours {
+  font-size: 10px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  line-height: 1;
 }
 
-.list-numbers span {
+.mcal-pay {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.mcal-week-sum {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 4px 8px;
+  border-top: 1px dashed var(--line);
   font-size: 11px;
   color: var(--muted);
+}
+
+.mcal-week-sum span:first-child {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ===== 深色模式 ===== */
