@@ -18,7 +18,98 @@
 - 后续建议：
 ```
 
-## 2026-05-13 21:20 CST - v0.2.10 手机端交互与登录修复
+## 2026-05-13 23:59 CST - v0.3.2 手机日历布局重构与暗色模式颜色修复
+
+- 触发原因：用户要求手机月历页重新布局（工资+工时+目标+放假四宫格、月份切换独立一行）、暗色模式下提示框白底白字等颜色问题修复、冗余文案清理。
+- 修改文件：`src/app.js`、`styles.css`、`index.html`、`admin.html`、`package.json`、`sw.js`、`PROJECT.md`、`MEMORY_UPDATES.md`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`.gitignore`。
+- 行为变化：
+  - 手机月历页顶部重构为四宫格（税前 / 总工时↔总加班 / 目标 / 放假↔本月上班），右上角明暗切换按钮；月份切换（‹ 今天 ›）独占一行。
+  - 总工时/总加班按钮点击切换（含休息日和节假日加班）。
+  - 放假提醒/本月上班天数按钮点击切换。
+  - 月历支持压缩到本周（收起/展开全部），折叠状态下跨月时自动回退到第一周。
+  - 新增 `.mobile-cal-topbar`、`.mobile-month-nav`、`.metric-clickable`、`.mcal-expand-btn`、`.mcal-collapse-btn` 等移动端组件。
+  - 手机版日历格子整体缩小（`min-height` 48→40px、字号 14→12px/9→8px 等），metric 卡片收紧，`main` 外边距缩减，整月可一屏看完。
+  - 暗色模式全面修复：新增 `--accent-ring`、`--warn-ring`、`--holiday-ring`、`--muted-ring`、`--notice-bg`/`--notice-color` 等主题变量，替换全部硬编码 rgba 边框，`.notice` 白底白字问题修正，`--text` 补定义，`.sidebar-release-link`→`.sidebar-account-card` 重命名。
+  - 补全 `.chart-legend`、`.report-empty-state`、`.settings-desktop-save`、`.cloud-session-row`、`.cloud-task-grid`、`.mobile-login-state` 等 7 个缺失样式。
+  - 桌面端工资规则卡仅出现在设置页，休息提醒仅出现在月历页，总工资仅出现在月历和报表页。
+  - 多处文案精简（引导页、helper、按钮描述等），去掉 AI 风格措辞。
+  - 版本更新到 v0.3.2，Service Worker 缓存名 `worktimeapp-v25`。
+- 验证结果：`node --check` 全部通过；`npm test` 45 项通过；`npm run build` 成功；三 agent 并行审查修复了 `.mobile-cal-topbar` 对齐、按钮 `min-height` 覆盖、month-nav 样式继承、dead code 等 7 个问题。
+- 风险/注意：`ui.calendarExpanded` 未持久化，刷新后重置为展开；`renderCalendarRestReminder` 桌面端调用 `calculateMonthlyPayroll` 与 `renderTopbar` 重复但开销极小。
+- 后续建议：可考虑将 mcal-* 样式移入 720px 媒体查询块以保持一致性。
+
+## 2026-05-13 23:00 CST - v0.3.2 界面减负与用语优化
+
+- 触发原因：用户要求工资规则卡只在设置页出现，休息提醒只在月历页出现，总工资只在月历和报表页出现，并检查其他冗余、AI 风格用语。
+- 修改文件：`src/app.js`、`styles.css`、`index.html`、`admin.html`、`package.json`、`sw.js`、`PROJECT.md`、`MEMORY_UPDATES.md`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`。
+- 行为变化：
+  - `render()` 中 `renderReadiness()` 仅当 `ui.view === "settings"` 时渲染；新增 `renderCalendarRestReminder()` 仅当月历视图渲染。
+  - `renderTopbar()` 中 metric strip（税前/税后/工时/距目标）仅当月历或报表视图渲染。
+  - `renderReadiness()` 移除休息倒计时行和 restReminder 依赖，只保留工资规则和完整性检查；设置页上的"规则"按钮不再出现。
+  - 新增 `.rest-reminder-bar` CSS 样式（桌面和移动端），用于月历页的休息提醒状态条。
+  - 多处文案精简：引导页标题、helper 提示、字段标签、登记按钮描述、批量说明、节假日说明等，去掉"一键""花 1 分钟""自动套用""勾选后不需要每天手动登记"等冗余/AI 风格措辞。
+  - 版本更新到 v0.3.2，Service Worker 缓存名更新到 `worktimeapp-v25`。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm test` 45 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过。
+- 风险/注意：工资规则卡移出非设置页后，用户若在月历/记录/报表页遇到配置缺失，不会看到明确提示；缺失配置的警告只在设置页可见。
+- 后续建议：如果用户在非设置页频繁遇到配置问题，可考虑在月历页顶部加一条可关闭的简短提示条。
+
+## 2026-05-13 16:56 CST - v0.3.1 版本线整理与侧边栏版本胶囊
+
+- 触发原因：用户要求当前版本写为 `v0.3.1`，后续补丁号到 9 后进入下一小版本，并把之前的 `v0.2.10` 改写为 `v0.3.0`；同时要求桌面侧边栏版本号放在“明薪工时”右边，只显示版本号并保留胶囊链接效果。
+- 修改文件：`src/app.js`、`index.html`、`admin.html`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 应用版本、入口资源参数、模块导入参数和 Service Worker 注册参数统一为 `0.3.1` / `v0.3.1`。
+  - Service Worker 缓存名更新到 `worktimeapp-v24`，降低发布后继续读取旧资源的概率。
+  - 历史版本 `v0.2.10` 改写为 `v0.3.0`；发布文档补充“补丁号到 9 后进入下一小版本”的版本规则。
+  - 桌面侧边栏品牌名右侧保留只写版本号的胶囊链接，点击进入 `changelog.html`。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm test` 45 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地 `4173` 被占用后改用 `4174` 启动静态服务，`curl -I http://127.0.0.1:4174/index.html` 返回 200。
+- 风险/注意：版本重命名会影响 Git 标签和 GitHub Release 命名；如果线上已经存在 `v0.2.10` / `v0.2.11` 标签，需要发布侧同步改为 `v0.3.0` / `v0.3.1` 或保留旧标签作为历史别名。
+- 后续建议：发布前确认线上入口 HTML、`src/app.js` 和 `sw.js` 都带 `v=0.3.1`，并在 GitHub Release 使用 `v0.3.1`。
+
+## 2026-05-13 17:15 CST - v0.3.1 报表说明与规则卡收口
+
+- 触发原因：用户指出上一轮 6 个修改点没有完全写完，特别是工资规则卡右侧“当前规则”多余、年度总结进度条颜色未说明、当前年份未来月份不应显示 0 元工资信息。
+- 修改文件：`src/app.js`、`styles.css`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 顶部工资规则卡在规则齐全时右侧只显示“规则”按钮，不再显示“当前规则”文字。
+  - 报表年度总结新增图例：绿色代表税后收入，黄色代表总工时。
+  - 当前年份中尚未到来的月份从年度总结条形列表中隐藏；如果用户切到未来月份，薪资拆分区显示空状态，不再展示 0 元工资拆分。
+  - 文档同步记录桌面版本胶囊、移动端底部登录态/版权、报表颜色说明和未来月份隐藏规则。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm test` 45 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地预览 `http://127.0.0.1:4174/src/app.js?v=0.3.1` 确认包含版本胶囊、报表颜色说明和未来月份过滤逻辑，且不再包含“当前规则”。
+- 风险/注意：隐藏未来月份只影响报表展示，不删除用户手动录入的未来记录；如果用户需要规划未来工资，可后续单独增加“计划模式”。
+- 后续建议：用桌面和手机视口分别检查报表年度总结图例、未来月份空状态、规则卡右侧按钮和底部登录态展示。
+
+## 2026-05-13 17:29 CST - v0.3.1 云备份登录入口修复
+
+- 触发原因：用户反馈云备份部分点击“去登录”无效，要求修复并继续检查是否还有其他问题。
+- 修改文件：`src/app.js`、`styles.css`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 桌面侧边栏底部云备份状态卡从不可点击的 `div` 改为按钮，点击会打开设置页并展开“数据管理”云备份区。
+  - 手机底部云备份登录状态从不可点击的 `span` 改为按钮，点击会进入设置二级页的“数据管理”。
+  - 新增 `openCloudSettings()` 统一处理入口跳转，关闭登记抽屉、保留当前登录态、保存 activeView，并在渲染后滚动到云备份卡片。
+  - 桌面设置页会根据 `ui.settingsSheetOpen === "data"` 自动展开数据管理分组。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm test` 45 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地预览 `http://127.0.0.1:4174/src/app.js?v=0.3.1` 确认包含 `open-cloud-settings` 事件、桌面/手机按钮和数据管理自动展开逻辑。
+- 风险/注意：这个修复只改变入口跳转，不改变云备份登录、加密、上传或恢复逻辑。
+- 后续建议：浏览器里分别点击桌面侧边栏底部状态卡和手机底部登录态，确认都能进入云备份登录区。
+
+## 2026-05-13 22:10 CST - v0.3.1 云同步与移动端设置修复
+
+- 触发原因：用户反馈设置二级页切换主页面后不会回到设置主菜单、所有下拉框点击后闪现消失、云备份遇到云端已有数据会失败、登录状态不应每次丢失，并要求继续检查各端体验。
+- 修改文件：`src/app.js`、`src/storage.js`、`styles.css`、`functions/index.js`、`tests/functions.test.js`、`index.html`、`admin.html`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 主导航切换会重置 `ui.settingsSheetOpen`，从设置二级页去月历/记录/报表后，再回设置会展示设置主菜单。
+  - 移动端设置详情容器改为不裁剪原生下拉层，`select` 显式使用系统原生选择框，降低 WebView 中下拉闪现关闭的问题。
+  - 云备份界面拆成登录区和备份区；未登录只显示账号、密码、登录、创建账号并上传，登录后显示上传本机到云端、从云端恢复到本机、退出登录。
+  - 用户登录后保存 7 天服务端签名 session token；上传和恢复可使用 token，不再每次要求输入密码；退出登录会清除 token，但不会保存密码。
+  - 云端已有更新时，上传本机会提示是否覆盖，用户确认后才带 `force` 覆盖云端旧备份。
+  - ESA 函数新增用户会话签发与校验，token 中的用户 ID 必须和请求用户一致，避免跨账号读取或写入。
+  - 桌面设置页增加固定保存区，减少改完设置后找不到保存按钮的问题。
+  - 版本更新到 v0.3.1，Service Worker 缓存名更新到 `worktimeapp-v23`。
+- 验证结果：`npm test` 45 项通过（新增用户云会话与冲突覆盖测试 2 项）；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；浏览器回归确认本地页面显示 `v0.3.1`、云备份未登录界面只显示登录/创建、下拉框可正常选择且无控制台错误。
+- 风险/注意：用户 session token 依赖 `RSA_key` 派生 HMAC 签名密钥，线上更换 `RSA_key` 会让旧登录状态失效，需要重新登录；这是预期安全行为。
+- 后续建议：发布后用真机检查设置页下拉框、云备份登录后恢复/上传、覆盖确认和 7 天登录状态；如果 ESA 有旧缓存，先确认入口 HTML 和 `sw.js` 都更新到 `v=0.3.1`。
+
+## 2026-05-13 21:20 CST - v0.3.0 手机端交互与登录修复
 
 - 触发原因：用户要求读取当前迭代记录、更新记忆，并集中修复手机版点击闪现、操作不舒服和无法登录等问题，同时召唤不同 agent 做测试流程。
 - 修改文件：`src/app.js`、`styles.css`、`functions/index.js`、`tests/functions.test.js`、`index.html`、`admin.html`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
@@ -30,8 +121,8 @@
   - 批量处理新增草稿保留，切换批量添加/批量删除不再重置日期范围、加班小时、删除范围和确认状态；`bulk-form` 支持 Enter 提交。
   - 管理员后端兼容 KV 中 `admin_name` 前后空格、`admin_passwd` 标准 PBKDF2、`salt/hash` 简写、明文字符串和常见 `{ value/password/plain }` 包装；`RSA_key` 和密码配置兼容误复制的三反引号代码围栏。
   - 坏密文会返回友好的登录信息错误，不再暴露 `Failed to decode base64` 等底层异常。
-  - 版本更新到 v0.2.10，Service Worker 缓存名更新到 `worktimeapp-v22`。
-- 验证结果：`npm test` 43 项通过（新增 ESA 单入口管理员登录测试 2 项）；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；浏览器手机宽度冒烟通过日期抽屉打开/关闭、隐藏抽屉 `aria-hidden`、手机设置数据管理页云同步表单读取、批量处理切换保留日期范围和版本显示 `v0.2.10`。
+  - 版本更新到 v0.3.0，Service Worker 缓存名更新到 `worktimeapp-v22`。
+- 验证结果：`npm test` 43 项通过（新增 ESA 单入口管理员登录测试 2 项）；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`tests/functions.test.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；浏览器手机宽度冒烟通过日期抽屉打开/关闭、隐藏抽屉 `aria-hidden`、手机设置数据管理页云同步表单读取、批量处理切换保留日期范围和版本显示 `v0.3.0`。
 - 风险/注意：移动端设置详情页现在由状态驱动渲染，若后续继续增加设置分组，需要确保分组表单包含的 checkbox 字段能被 `settingsFromForm()` 识别。
 - 后续建议：发布后用真机在 `time.yuan6.cn` 检查手机日历日期点击、云同步登录、批量处理切换和管理员后台登录；如果仍登录失败，优先核对 KV 中 `admin_name` 与 `admin_passwd` 的实际值。
 
@@ -47,7 +138,7 @@
   - 薪资模式切换仅桌面端调用 `render()`。
 - 验证结果：`npm test` 41 项通过；所有语法检查通过；`npm run build` 成功。
 - 风险/注意：无。
-- 后续建议：后续 bug 修复版本使用最小版本号（如 v0.2.10、v0.2.11）。
+- 后续建议：后续 bug 修复版本使用最小版本号（如 v0.3.0、v0.3.1）。
 
 ## 2026-05-13 18:00 CST - v0.2.8 发布：批量添加修复、自动工时、手机二级页面
 

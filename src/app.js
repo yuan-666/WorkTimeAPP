@@ -30,23 +30,25 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.2.10";
+} from "./calculations.js?v=0.3.2";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.2.10";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.10";
+} from "./storage.js?v=0.3.2";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.2";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.2.10";
-const RELEASE_COUNT = 20;
+const APP_VERSION = "v0.3.2";
+const RELEASE_COUNT = 21;
 const CLOUD_API_BASE = "/api/cloud";
+const CLOUD_SESSION_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 let state = loadState();
+state.cloud = normalizeCloudConfig(state.cloud);
 let ui = {
   view: state.activeView || "calendar",
   year: now.getFullYear(),
@@ -68,7 +70,10 @@ let ui = {
   recordsSearch: "",
   recordsDateFrom: "",
   recordsDateTo: "",
-  pageTransition: true
+  pageTransition: true,
+  hoursMode: "total",
+  restInfoMode: "rest",
+  calendarExpanded: true
 };
 const repairedOnLoad = repairRepeatedEntries();
 if (repairedOnLoad) {
@@ -115,6 +120,9 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.view) {
     const nextView = target.dataset.view;
     ui.pageTransition = ui.view !== nextView;
+    if (nextView !== "settings" || ui.view === "settings") {
+      ui.settingsSheetOpen = "";
+    }
     ui.view = nextView;
     state.activeView = ui.view;
     ui.entrySheetOpen = false;
@@ -267,6 +275,11 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "open-cloud-settings") {
+    openCloudSettings();
+    return;
+  }
+
   if (action === "toggle-entry-advanced") {
     ui.entryAdvanced = !ui.entryAdvanced;
     render();
@@ -337,6 +350,26 @@ document.addEventListener("click", async (event) => {
 
   if (action === "undo-delete") {
     undoDelete();
+  }
+
+  if (action === "toggle-hours-mode") {
+    ui.hoursMode = ui.hoursMode === "total" ? "overtime" : "total";
+    render();
+  }
+
+  if (action === "toggle-rest-info") {
+    ui.restInfoMode = ui.restInfoMode === "rest" ? "workdays" : "rest";
+    render();
+  }
+
+  if (action === "expand-calendar") {
+    ui.calendarExpanded = true;
+    render();
+  }
+
+  if (action === "collapse-calendar") {
+    ui.calendarExpanded = false;
+    render();
   }
 });
 
@@ -478,7 +511,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.10", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.2", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -504,7 +537,8 @@ function render() {
       ${renderSidebar()}
       <main class="main ${ui.pageTransition ? "is-page-entering" : ""}">
         ${renderTopbar()}
-        ${renderReadiness()}
+        ${ui.view === "settings" ? renderReadiness() : ""}
+        ${ui.view === "calendar" ? renderCalendarRestReminder() : ""}
         ${ui.notice ? `<p class="notice" role="status">${escapeHtml(ui.notice)}${ui.lastDeleted ? ` <button type="button" data-action="undo-delete">撤销</button>` : ""}</p>` : ""}
         ${ui.view === "calendar" ? renderCalendarView() : ""}
         ${ui.view === "records" ? renderRecordsView() : ""}
@@ -564,7 +598,7 @@ function renderSetupWizard() {
         <div class="setup-wizard-header">
           <img src="./assets/icon.svg" alt="" width="56" height="56">
           <h1>欢迎使用明薪工时</h1>
-          <p>花 1 分钟设置你的薪资规则，之后每天记工时就很快了。</p>
+          <p>设置你的薪资和班次</p>
         </div>
         <form id="setup-form" class="setup-wizard-form">
           <div class="setup-step">
@@ -628,7 +662,7 @@ function renderSidebar() {
       <div class="brand">
         <img src="./assets/icon.svg" alt="" width="40" height="40">
         <div>
-          <strong>明薪工时</strong>
+          <strong><span>明薪工时</span><a class="brand-version-link" href="./changelog.html">${APP_VERSION}</a></strong>
           <span>${MODE_LABELS[state.settings.salaryMode]}</span>
         </div>
       </div>
@@ -685,6 +719,12 @@ function renderTopbar() {
   const grossByMonth = summarizeYear(state.entries, state.adjustments, state.settings, ui.year).map((item) => item.grossBeforeTax);
   const tax = calculateCumulativeTaxForMonth(grossByMonth, state.settings, ui.monthIndex);
   const goalDelta = Number(state.settings.goals.monthlyIncome || 0) - (payroll.grossBeforeTax - tax.currentTax);
+  const isCalendarMobile = ui.view === "calendar" && isMobileViewport();
+
+  if (isCalendarMobile) {
+    return renderMobileCalendarTopbar(payroll, goalDelta);
+  }
+
   return `
     <header class="topbar">
       <div>
@@ -698,12 +738,51 @@ function renderTopbar() {
         <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
       </div>
     </header>
+    ${(["calendar", "reports"].includes(ui.view)) ? `
     <section class="metric-strip" aria-label="本月汇总">
       ${metric("税前", money(payroll.grossBeforeTax))}
       ${metric("税后", money(payroll.grossBeforeTax - tax.currentTax))}
       ${metric("工时", `${payroll.totalHours}h`)}
       ${metric(goalDelta > 0 ? "距目标" : "超目标", money(Math.abs(goalDelta)))}
     </section>
+    ` : ""}
+  `;
+}
+
+function renderMobileCalendarTopbar(payroll, goalDelta) {
+  const hoursLabel = ui.hoursMode === "total" ? "总工时" : "总加班";
+  const hoursValue = ui.hoursMode === "total" ? payroll.totalHours : payroll.overtimeHours;
+  const restReminder = calculateRestReminder(today, state.settings, state.entries);
+  const showRest = ui.restInfoMode === "rest";
+  const restLabel = showRest ? (restReminder.label || "放假提醒") : "本月上班";
+  const restValue = showRest
+    ? (restReminderText(restReminder) || "—")
+    : `${payroll.attendanceDays}天`;
+  return `
+    <header class="topbar mobile-cal-topbar">
+      <div class="mobile-cal-head">
+        <p class="eyebrow">${ui.year}年${MONTHS[ui.monthIndex]}</p>
+        <button class="plain-button theme-button mobile-theme-btn" type="button" data-action="toggle-theme" title="${themeModeLabel(state.settings.themeMode)}" aria-label="切换明暗">${themeIcon(state.settings.themeMode)}</button>
+      </div>
+      <section class="metric-strip mobile-metric-strip" aria-label="本月汇总">
+        <div class="metric">
+          <span>税前</span>
+          <strong>${money(payroll.grossBeforeTax)}</strong>
+        </div>
+        <button class="metric metric-clickable" type="button" data-action="toggle-hours-mode">
+          <span>${hoursLabel}</span>
+          <strong>${hoursValue}h</strong>
+        </button>
+        <div class="metric">
+          <span>${goalDelta > 0 ? "距目标" : "超目标"}</span>
+          <strong>${money(Math.abs(goalDelta))}</strong>
+        </div>
+        <button class="metric metric-clickable" type="button" data-action="toggle-rest-info">
+          <span>${escapeHtml(restLabel)}</span>
+          <strong>${escapeHtml(restValue)}</strong>
+        </button>
+      </section>
+    </header>
   `;
 }
 
@@ -711,38 +790,91 @@ function renderReadiness() {
   const insights = deriveSalaryInsights(state.settings);
   const missing = insights.missingConfig.map((key) => MISSING_LABELS[key] || key);
   const integrityIssues = findEntryIntegrityIssues();
-  const restReminder = calculateRestReminder(today, state.settings, state.entries);
-  const backupText = state.backup?.lastExportedAt
-    ? `最近备份 ${formatDateTime(state.backup.lastExportedAt)}`
-    : "尚未备份";
-  const cloudText = state.cloud?.lastSyncAt
-    ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}`
-    : (state.cloud?.userId ? "云端已登录" : "云端未登录");
-  const derivedText = [
-    insights.isDerived.regularHourlyRate ? `正班时薪 ${money(insights.regularHourlyRate)} 自动推算` : "",
-    insights.isDerived.baseOvertimeRate ? `加班基数 ${money(insights.baseOvertimeRate)} 自动推算` : "",
-    insights.isDerived.hourlyRate ? `小时工时薪 ${money(insights.rates.hourlyRate)} 自动推算` : "",
-    insights.isDerived.comprehensiveHourlyRate ? `综合工时时薪 ${money(insights.rates.comprehensiveHourlyRate)} 自动推算` : ""
-  ].filter(Boolean).join("，");
-  const needsAttention = missing.length || integrityIssues.length || restReminder.isRestDue || restReminder.requiresAnchor;
+  const needsAttention = missing.length || integrityIssues.length;
   const issueDates = integrityIssues.slice(0, 3).map((item) => item.date.slice(5)).join("、");
+  const hasBlockingIssue = integrityIssues.length || missing.length;
   const title = integrityIssues.length
     ? `发现 ${integrityIssues.length} 天工时异常`
-    : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : (restReminder.isRestDue ? "今天建议安排休息" : "工资规则已就绪"));
-  const detail = integrityIssues.length
+    : (missing.length ? `还差 ${missing.length} 项，工资可能算不准` : "工资规则已就绪");
+  const actionText = integrityIssues.length
     ? `${issueDates} 超过合理上限，请整理或编辑`
-    : (missing.length ? missing.join("、") : (derivedText || `${restReminder.label}：${restReminder.detail}`));
+    : (missing.length ? `需补充：${missing.join("、")}` : "");
   return `
     <section class="readiness ${needsAttention ? "needs-attention" : ""}">
-      <div>
-        <strong>${title}</strong>
-        <span>${detail}</span>
+      <div class="readiness-static">
+        <div class="readiness-heading">
+          <strong>${title}</strong>
+          <span>${hasBlockingIssue ? "补充完成后工资会更准。" : "按当前设置计算以下时薪。"}</span>
+        </div>
+        ${hasBlockingIssue ? "" : `
+          <div class="readiness-rate-grid">
+            ${readinessRateItems(insights).map((item) => `
+              <span>
+                <em>${escapeHtml(item.label)}</em>
+                <strong>${money(item.value)}</strong>
+              </span>
+            `).join("")}
+          </div>
+        `}
       </div>
-      <div>
-        <span>${backupText} · ${cloudText}</span>
-        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : `<button class="plain-button" type="button" data-view="settings">规则</button>`}
+      <div class="readiness-action ${actionText ? "" : "is-button-only"}">
+        ${actionText ? `<span>${escapeHtml(actionText)}</span>` : ""}
+        ${integrityIssues.length ? `<button class="plain-button" type="button" data-action="repair-records">整理</button>` : ""}
       </div>
     </section>
+  `;
+}
+
+function readinessRateItems(insights) {
+  const settings = state.settings;
+  const regularRate = settings.salaryMode === SALARY_MODES.BASE_OVERTIME
+    ? insights.rates.baseHourlyRate
+    : activeOvertimeBaseRate(insights);
+  const overtimeBase = activeOvertimeBaseRate(insights);
+  return [
+    { label: "正班时薪", value: regularRate },
+    { label: "工作日加班时薪", value: round2(overtimeBase * overtimeMultiplierForDay("workday", settings)) },
+    { label: "休息日加班时薪", value: round2(overtimeBase * overtimeMultiplierForDay("restday", settings)) },
+    { label: "节假日加班时薪", value: round2(overtimeBase * overtimeMultiplierForDay("holiday", settings)) }
+  ];
+}
+
+function activeOvertimeBaseRate(insights) {
+  if (state.settings.salaryMode === SALARY_MODES.BASE_OVERTIME) return insights.baseOvertimeRate;
+  if (state.settings.salaryMode === SALARY_MODES.HOURLY) return insights.rates.hourlyRate;
+  if (state.settings.salaryMode === SALARY_MODES.COMPREHENSIVE) return insights.rates.comprehensiveHourlyRate;
+  return insights.regularHourlyRate;
+}
+
+function restReminderText(reminder) {
+  if (reminder.requiresAnchor) return "设置上一次休息日，或先记录一次休息";
+  return `${reminder.detail}${reminder.nextRestDate ? ` · 下次 ${reminder.nextRestDate}` : ""}`;
+}
+
+function renderCalendarRestReminder() {
+  const isMobileCal = isMobileViewport();
+  if (isMobileCal) {
+    const isCurrentMonth = ui.year === now.getFullYear() && ui.monthIndex === now.getMonth();
+    return `
+      <section class="mobile-month-nav" aria-label="月份切换">
+        <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
+        <button class="plain-button" type="button" data-action="today">${isCurrentMonth ? "今天" : "回到本月"}</button>
+        <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
+      </section>
+    `;
+  }
+  const restReminder = calculateRestReminder(today, state.settings, state.entries);
+  const payroll = calculateMonthlyPayroll(state.entries, state.adjustments, state.settings, ui.year, ui.monthIndex);
+  const showRest = ui.restInfoMode === "rest";
+  const label = showRest ? (restReminder.label || "放假提醒") : "本月上班";
+  const detail = showRest
+    ? (restReminderText(restReminder))
+    : `${payroll.attendanceDays} 天 · ${payroll.totalHours}h`;
+  return `
+    <button class="rest-reminder-bar ${restReminder.isRestDue && showRest ? "is-due" : ""}" type="button" data-action="toggle-rest-info" aria-label="${label}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(detail)}</strong>
+    </button>
   `;
 }
 
@@ -779,7 +911,7 @@ function renderCalendarView() {
     <div class="workspace calendar-layout">
       ${renderUnloggedPanel()}
       ${useListView
-        ? renderCalendarListView(days, entriesByDate, adjustmentsByDate)
+        ? renderCalendarListView(days, entriesByDate, adjustmentsByDate, ui.calendarExpanded)
         : `<section class="calendar-panel" aria-label="日历">
             <div class="weekday-grid">
               ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
@@ -804,7 +936,6 @@ function renderCalendarView() {
           </div>
         </div>
         ${renderDayStatus(selectedEntries)}
-        ${renderRestReminderCard(ui.selectedDate)}
         ${renderEntryForm()}
         ${renderSelectedDayList(selectedEntries, selectedAdjustments)}
       </section>
@@ -812,13 +943,17 @@ function renderCalendarView() {
   `;
 }
 
-function renderCalendarListView(days, entriesByDate, adjustmentsByDate) {
+function renderCalendarListView(days, entriesByDate, adjustmentsByDate, expanded = true) {
   const weeks = [];
   for (let i = 0; i < days.length; i += 7) {
     weeks.push(days.slice(i, i + 7));
   }
   const weekdayHeaders = weekdayOrder(state.settings.weekStart);
-  const html = weeks.map((weekDays) => {
+  let displayWeeks = expanded ? weeks : weeks.filter((weekDays) => weekDays.some((d) => d.date === today));
+  if (!displayWeeks.length) {
+    displayWeeks = weeks.slice(0, 1);
+  }
+  const html = displayWeeks.map((weekDays) => {
     const weekStart = weekDays[0]?.date || "";
     const isCurrentWeek = weekDays.some((d) => d.date === today);
     let weekHours = 0;
@@ -861,6 +996,8 @@ function renderCalendarListView(days, entriesByDate, adjustmentsByDate) {
   return `
     <section class="calendar-panel mcal-panel" aria-label="日历">
       ${html}
+      ${!expanded ? `<button class="mcal-expand-btn" type="button" data-action="expand-calendar">展开全部 ${weeks.length} 周</button>` : ""}
+      ${expanded && weeks.length > 1 ? `<button class="mcal-collapse-btn" type="button" data-action="collapse-calendar">收起 · 只看本周</button>` : ""}
     </section>
   `;
 }
@@ -890,19 +1027,6 @@ function renderDayStatus(entries) {
         <b>${money(pay)}</b>
         <span>${dayMeta} · ${ruleText}</span>
       </div>
-    </div>
-  `;
-}
-
-function renderRestReminderCard(date) {
-  const reminder = calculateRestReminder(date, state.settings, state.entries);
-  const text = reminder.requiresAnchor
-    ? "设置上一次休息日后，系统会按你的排班反推下一次该休息的日子。"
-    : `${reminder.detail}${reminder.nextRestDate ? ` · 下次 ${reminder.nextRestDate}` : ""}`;
-  return `
-    <div class="rest-reminder ${reminder.isRestDue ? "is-due" : ""}">
-      <span>${escapeHtml(reminder.label)}</span>
-      <strong>${escapeHtml(text)}</strong>
     </div>
   `;
 }
@@ -1074,10 +1198,10 @@ function renderEntryForm() {
         <small>${payRuleTextForDayType(entry.dayType || inferredDayType)}</small>
       </div>
       <div class="entry-choice-grid" aria-label="登记类型">
-        ${entryIntentButton("normal", "正常上班", "默认班次，自动算加班", isNormalChoice)}
+        ${entryIntentButton("normal", "正常上班", "默认班次", isNormalChoice)}
         ${entryIntentButton("overtime", "有加班", overtimePreset ? escapeHtml(overtimePreset.name) : "晚下班自动拆加班", isOvertimeChoice)}
-        ${entryIntentButton("rest", "休息", "一键标记，不计工资", isRestChoice)}
-        ${entryIntentButton("note", "请假", "年假事假病假都在这里", isNoteChoice)}
+        ${entryIntentButton("rest", "休息", "不计工资", isRestChoice)}
+        ${entryIntentButton("note", "请假", "年假/事假/病假/调休", isNoteChoice)}
       </div>
       ${timeTools}
       <div class="entry-advanced ${advancedClass}">
@@ -1101,7 +1225,7 @@ function renderEntryForm() {
             ${field("加班小时", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="${escapeAttr(entry.overtimeHours ?? 0)}">`)}
             ${field("总小时", `<input name="totalHours" type="number" min="0" max="${WORK_LIMITS.maxEntryHours}" step="0.25" value="${escapeAttr(entry.totalHours ?? "")}">`)}
           </div>
-          <small class="helper">只有选择“直接填小时”时才需要改这里；按上下班时间会自动计算总时长。</small>
+          <small class="helper">按上下班时间登记时，这里自动计算</small>
         </div>
         ${field("目标", `<input name="target" type="text" maxlength="40" value="${escapeAttr(entry.target || "")}" placeholder="今天想完成什么">`)}
         ${field("备注", `<textarea name="note" rows="3" maxlength="160" placeholder="请假、调班、特殊说明">${escapeHtml(entry.note || "")}</textarea>`)}
@@ -1135,7 +1259,7 @@ function renderShiftChoice(entry) {
     <div class="shift-choice">
       <div>
         <span>今日班次</span>
-        <strong>${hasDifferentWorkShifts ? "白班和夜班时间不同，先选今天上哪个班" : "工作日默认有班，确认后保存即可"}</strong>
+        <strong>${hasDifferentWorkShifts ? "先选今天上哪个班" : "工作日默认有班"}</strong>
       </div>
       <div class="preset-grid" aria-label="班次模板">
         ${state.settings.shiftPresets.map((preset) => renderPresetButton(preset, entry)).join("")}
@@ -1506,8 +1630,8 @@ function bulkAddKindOptions() {
 }
 
 function bulkAddKindHelp(kind) {
-  if (kind === "monthlyBase") return "一键补齐本月基础工作日 8 小时；已有加班不会被跳过。";
-  if (kind === "overtime") return "只添加每天加班小时，适合综合工时制、小时工或补记固定加班。";
+  if (kind === "monthlyBase") return "补齐本月基础工作日 8 小时，已有加班不跳过。";
+  if (kind === "overtime") return "只添加每天加班小时。";
   return "按当前班次模板批量生成，适合固定白班、夜班或休息日加班。";
 }
 
@@ -1545,8 +1669,10 @@ function renderAdjustmentForm() {
 function renderReportsView() {
   const yearSummary = summarizeYear(state.entries, state.adjustments, state.settings, ui.year);
   const selected = yearSummary[ui.monthIndex];
-  const maxIncome = Math.max(1, ...yearSummary.map((item) => item.netIncome));
-  const maxHours = Math.max(1, ...yearSummary.map((item) => item.totalHours));
+  const visibleYearSummary = yearSummary.filter((item) => !isFutureReportMonth(ui.year, item.monthIndex));
+  const selectedIsFuture = isFutureReportMonth(ui.year, ui.monthIndex);
+  const maxIncome = Math.max(1, ...visibleYearSummary.map((item) => item.netIncome));
+  const maxHours = Math.max(1, ...visibleYearSummary.map((item) => item.totalHours));
   const incomeGoal = Number(state.settings.goals.monthlyIncome) || 0;
   const hoursGoal = Number(state.settings.goals.monthlyHours) || 0;
   const explainRows = [
@@ -1571,14 +1697,18 @@ function renderReportsView() {
             <button class="plain-button" type="button" data-action="export-excel">Excel</button>
           </div>
         </div>
+        <div class="chart-legend" aria-label="年度条颜色说明">
+          <span><i class="income-dot"></i>绿色为税后收入</span>
+          <span><i class="hours-dot"></i>黄色为总工时</span>
+        </div>
         <div class="chart" aria-label="年度工资与工时">
-          ${yearSummary.map((item) => `
+          ${visibleYearSummary.length ? visibleYearSummary.map((item) => `
             <button class="bar-row ${item.monthIndex === ui.monthIndex ? "is-active" : ""}" type="button" data-date="${ui.year}-${String(item.monthIndex + 1).padStart(2, "0")}-01">
               <span>${MONTHS[item.monthIndex]}</span>
               <i style="--income:${Math.max(3, item.netIncome / maxIncome * 100)}%;--hours:${Math.max(3, item.totalHours / maxHours * 100)}%"></i>
               <b>${money(item.netIncome)}</b>
             </button>
-          `).join("")}
+          `).join("") : `<p class="empty">未来年份暂不展示年度工资信息</p>`}
         </div>
       </section>
       <section class="detail-panel">
@@ -1588,36 +1718,49 @@ function renderReportsView() {
             <h2>薪资拆分</h2>
           </div>
         </div>
-        ${renderPieChart(selected)}
-        ${renderWeeklyTrend(yearSummary, ui.year, ui.monthIndex)}
-        <div class="summary-list">
-          ${summaryLine("出勤天数", `${selected.attendanceDays} 天`)}
-          ${summaryLine("总工时", `${selected.totalHours} 小时`)}
-          ${summaryLine("正班工资", money(selected.regularPay))}
-          ${summaryLine("加班工资", money(selected.overtimePay))}
-          ${summaryLine("底薪", money(selected.basePay))}
-          ${summaryLine("补贴", money(selected.allowances))}
-          ${summaryLine("扣款", money(selected.deductions))}
-          ${summaryLine("税前合计", money(selected.grossBeforeTax))}
-          ${summaryLine("个税", money(selected.tax.currentTax))}
-          ${summaryLine("税后收入", money(selected.netIncome), true)}
-        </div>
-        <h3>本月工资怎么算出来的</h3>
-        <div class="explain-list">
-          ${explainRows.map(([label, value]) => `
-            <div>
-              <span>${label}</span>
-              <strong class="${value < 0 ? "negative" : ""}">${value < 0 ? "-" : ""}${money(Math.abs(value))}</strong>
-            </div>
-          `).join("")}
-        </div>
-        <div class="goals">
-          ${goal("收入目标", selected.netIncome, incomeGoal, money(selected.netIncome), money(incomeGoal))}
-          ${goal("工时目标", selected.totalHours, hoursGoal, `${selected.totalHours}h`, `${hoursGoal}h`)}
-        </div>
+        ${selectedIsFuture ? `
+          <div class="report-empty-state">
+            <strong>这个月份还没到</strong>
+            <span>暂不展示未来月份工资，等有真实记录后再统计。</span>
+          </div>
+        ` : `
+          ${renderPieChart(selected)}
+          ${renderWeeklyTrend(yearSummary, ui.year, ui.monthIndex)}
+          <div class="summary-list">
+            ${summaryLine("出勤天数", `${selected.attendanceDays} 天`)}
+            ${summaryLine("总工时", `${selected.totalHours} 小时`)}
+            ${summaryLine("正班工资", money(selected.regularPay))}
+            ${summaryLine("加班工资", money(selected.overtimePay))}
+            ${summaryLine("底薪", money(selected.basePay))}
+            ${summaryLine("补贴", money(selected.allowances))}
+            ${summaryLine("扣款", money(selected.deductions))}
+            ${summaryLine("税前合计", money(selected.grossBeforeTax))}
+            ${summaryLine("个税", money(selected.tax.currentTax))}
+            ${summaryLine("税后收入", money(selected.netIncome), true)}
+          </div>
+          <h3>本月工资怎么算出来的</h3>
+          <div class="explain-list">
+            ${explainRows.map(([label, value]) => `
+              <div>
+                <span>${label}</span>
+                <strong class="${value < 0 ? "negative" : ""}">${value < 0 ? "-" : ""}${money(Math.abs(value))}</strong>
+              </div>
+            `).join("")}
+          </div>
+          <div class="goals">
+            ${goal("收入目标", selected.netIncome, incomeGoal, money(selected.netIncome), money(incomeGoal))}
+            ${goal("工时目标", selected.totalHours, hoursGoal, `${selected.totalHours}h`, `${hoursGoal}h`)}
+          </div>
+        `}
       </section>
     </div>
   `;
+}
+
+function isFutureReportMonth(year, monthIndex) {
+  const currentYear = now.getFullYear();
+  const currentMonthIndex = now.getMonth();
+  return year > currentYear || (year === currentYear && monthIndex > currentMonthIndex);
 }
 
 
@@ -1691,15 +1834,16 @@ function renderWeeklyTrend(yearSummary, year, monthIndex) {
 
 function renderAppFooter() {
   const year = new Date().getFullYear();
+  const account = cloudAccountStatus();
   return `
     <footer class="sidebar-footer" aria-label="页脚">
-      <a class="sidebar-release-link" href="./changelog.html" aria-label="查看更新日志">
+      <button class="sidebar-account-card" type="button" data-action="open-cloud-settings" aria-label="打开云备份登录">
         <span class="footer-stat">
-          <strong>${APP_VERSION}</strong>
-          <em>当前版本</em>
+          <em>云备份账号</em>
+          <strong>${escapeHtml(account.title)}</strong>
         </span>
-        <span class="footer-stat-action">查看日志</span>
-      </a>
+        <span class="footer-stat-action">${escapeHtml(account.detail)}</span>
+      </button>
       <div class="sidebar-footer-bottom">
         <span>© ${year} yuan 版权所有</span>
         <div class="sidebar-footer-links">
@@ -1717,18 +1861,50 @@ function renderAppFooter() {
 
 function renderMobileFooter() {
   const year = new Date().getFullYear();
+  const account = cloudAccountStatus();
   return `
     <div class="mobile-footer-strip" aria-label="页脚">
-      <span>© ${year} yuan</span>
-      <a href="./changelog.html" aria-label="查看更新日志">${APP_VERSION}</a>
-      <a href="https://github.com/yuan-666/WorkTimeAPP" target="_blank" rel="noopener" aria-label="GitHub">
-        <svg width="15" height="15" aria-hidden="true"><use href="./assets/social-icons.svg#github-icon"></use></svg>
-      </a>
-      <a href="https://yuan6.cn" target="_blank" rel="noopener" aria-label="友情链接：yuan6.cn">
-        <svg width="15" height="15" aria-hidden="true"><use href="./assets/social-icons.svg#blog-icon"></use></svg>
-      </a>
+      <button class="mobile-login-state" type="button" data-action="open-cloud-settings">${escapeHtml(account.mobileText)}</button>
+      <span>© ${year} yuan 版权所有</span>
     </div>
   `;
+}
+
+function openCloudSettings() {
+  ui.pageTransition = ui.view !== "settings";
+  ui.view = "settings";
+  ui.settingsSheetOpen = "data";
+  ui.entrySheetOpen = false;
+  ui.entrySheetVisible = false;
+  state.activeView = "settings";
+  persist();
+  render();
+  requestAnimationFrame(() => {
+    document.querySelector(".cloud-sync-card")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
+
+function cloudAccountStatus() {
+  const cloud = state.cloud || {};
+  if (isCloudSessionValid(cloud) && cloud.userId) {
+    return {
+      title: cloud.userId,
+      detail: "已登录",
+      mobileText: `云备份已登录：${cloud.userId}`
+    };
+  }
+  if (cloud.userId) {
+    return {
+      title: cloud.userId,
+      detail: "未登录",
+      mobileText: `云备份未登录：${cloud.userId}`
+    };
+  }
+  return {
+    title: "未登录",
+    detail: "去设置登录",
+    mobileText: "云备份未登录"
+  };
 }
 
 function renderSettingsView() {
@@ -1762,14 +1938,14 @@ function renderSettingsView() {
       `)}
       <label class="check-row">
         <input type="checkbox" name="autoFillWorkday" value="true" ${settings.autoFillWorkday ? "checked" : ""}>
-        <span>无记录的工作日自动算 ${settings.normalHoursPerDay}h 正班（勾选后不需要每天手动登记）</span>
+        <span>无记录的工作日自动算 ${settings.normalHoursPerDay}h 正班</span>
       </label>
       <div class="form-grid">
         ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
         ${modeFields.includes("baseSalary") ? moneyField("底薪", "baseSalary", settings.baseSalary) : ""}
         ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-        ${modeFields.includes("regularHourlyRate") ? moneyField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate) : ""}
-        ${modeFields.includes("hourlyRate") ? moneyField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate) : ""}
+        ${modeFields.includes("regularHourlyRate") ? moneyField("正班时薪（可留空）", "regularHourlyRate", settings.regularHourlyRate) : ""}
+        ${modeFields.includes("hourlyRate") ? moneyField("小时工正班时薪（可留空）", "hourlyRate", settings.hourlyRate) : ""}
         ${modeFields.includes("baseOvertimeRate") ? moneyField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate) : ""}
         ${modeFields.includes("comprehensiveHourlyRate") ? moneyField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate) : ""}
         ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
@@ -1813,7 +1989,7 @@ function renderSettingsView() {
       <div class="preset-editor">
         ${settings.shiftPresets.map((preset, index) => `<div class="${preset.id === "rest" ? "preset-hidden" : ""}">${renderPresetEditor(preset, index)}</div>`).join("")}
       </div>
-      <small class="helper">选择上班方式会自动配置常用班次；默认班次决定工作日自动使用哪个模板。</small>
+      <small class="helper">选择上班方式会同步生成班次模板</small>
     </div>`;
 
   const workdaysBody = `
@@ -1835,7 +2011,7 @@ function renderSettingsView() {
           </select>
         `)}
       </div>
-      <small class="helper">每周双休/单休会自动套用常见休息日；轮班制可用上六休一、上十四休一，并通过休息记录自动推算下一次休假。</small>
+      <small class="helper">轮班制可用上六休一、上十四休一；休息记录会自动推算下一次休假。</small>
       <div class="workweek-grid custom-workweek-grid">
         ${weekdayOrder(settings.weekStart).map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), `周${weekLabelByIndex(weekday)}上班`, settings.workweek.includes(weekday))).join("")}
       </div>
@@ -1896,8 +2072,7 @@ function renderSettingsView() {
           <input id="import-file" type="file" accept="application/json,.json">
         </label>
         <div class="button-row">
-          <button class="plain-button" type="button" data-action="backup">备份</button>
-          <button class="primary-button" type="submit">保存设置</button>
+          <button class="plain-button" type="button" data-action="backup">导出本地备份</button>
         </div>
       </div>
     </div>`;
@@ -2010,7 +2185,7 @@ function renderSettingsView() {
             <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪，也可以手动填写。`}</p>
           </div>
           ${settingsGroups.map((group) => `
-            <details class="settings-group" ${group.open ? "open" : ""}>
+            <details class="settings-group" ${group.open || sheetGroup === group.id ? "open" : ""}>
               <summary class="settings-group-title">
                 <span>${escapeHtml(group.title)}</span>
                 <small>${escapeHtml(group.summary)}</small>
@@ -2018,6 +2193,9 @@ function renderSettingsView() {
               ${groupBodies[group.id]}
             </details>
           `).join("")}
+          <div class="settings-desktop-save">
+            <button class="primary-button" type="submit">保存设置</button>
+          </div>
         </form>
       </section>
     </div>
@@ -2025,28 +2203,49 @@ function renderSettingsView() {
 }
 
 function renderCloudSyncPanel() {
-  const cloud = state.cloud || {};
+  const rawCloud = state.cloud || {};
+  const expired = Boolean(rawCloud.userId && rawCloud.sessionToken && !isCloudSessionValid(rawCloud));
+  const cloud = normalizeCloudConfig(rawCloud);
+  const loggedIn = isCloudSessionValid(cloud);
+  const syncText = cloud.lastSyncAt ? `上次同步 ${formatDateTime(cloud.lastSyncAt)}` : "还没有同步记录";
+  const remoteText = cloud.remoteUpdatedAt ? `云端更新 ${formatDateTime(cloud.remoteUpdatedAt)}` : "云端状态会在登录后显示";
   return `
-    <div class="cloud-sync-card">
+    <div class="cloud-sync-card ${loggedIn ? "is-cloud-logged-in" : ""}">
       <div class="cloud-sync-head">
         <div>
           <span>云备份</span>
-          <strong>${cloud.userId ? `账号 ${escapeHtml(cloud.userId)}` : "未登录"}</strong>
+          <strong>${loggedIn ? `已登录：${escapeHtml(cloud.userId)}` : "先登录，再备份或恢复"}</strong>
         </div>
-        <small>${cloud.remoteUpdatedAt ? `云端更新 ${formatDateTime(cloud.remoteUpdatedAt)}` : "可在多台设备之间恢复数据"}</small>
+        <small>${loggedIn ? `${syncText} · ${remoteText}` : (expired ? "登录已过期，请重新输入密码" : "同一账号可在多台设备之间同步")}</small>
       </div>
-      <div class="form-grid">
-        ${field("云备份账号", `<input name="cloud.userId" type="text" value="${escapeAttr(cloud.userId || "")}" autocomplete="username" placeholder="3-64 位字母、数字、下划线或短横线">`)}
-        ${field("密码", `<input name="cloud.password" type="password" autocomplete="current-password" placeholder="仅本次操作使用，不会保存到本机">`)}
-        <label class="field cloud-hint"><span>说明</span><small>登录后可以把本机记录备份到云端，也可以在新设备上恢复。恢复前请确认账号无误。</small></label>
-      </div>
-      <div class="button-row cloud-actions">
-        <button class="plain-button" type="button" data-action="cloud-login">登录</button>
-        <button class="plain-button" type="button" data-action="cloud-register">创建并备份</button>
-        <button class="primary-button" type="button" data-action="cloud-push">备份本机</button>
-        <button class="danger-button" type="button" data-action="cloud-pull">恢复到本机</button>
-      </div>
-      <small class="helper">恢复会用云端备份覆盖本机工时、设置和补扣记录。</small>
+      ${loggedIn ? `
+        <div class="cloud-session-row">
+          <span>${escapeHtml(cloud.userId)}</span>
+          <button class="plain-button" type="button" data-action="cloud-logout">退出登录</button>
+        </div>
+        <div class="cloud-task-grid">
+          <div>
+            <strong>上传本机</strong>
+            <small>把当前设备的工时、设置和补扣保存到云端。</small>
+            <button class="primary-button" type="button" data-action="cloud-push">上传本机到云端</button>
+          </div>
+          <div>
+            <strong>恢复云端</strong>
+            <small>用云端备份覆盖当前设备，操作前会再次确认。</small>
+            <button class="danger-button" type="button" data-action="cloud-pull">从云端恢复到本机</button>
+          </div>
+        </div>
+      ` : `
+        <div class="form-grid">
+          ${field("云备份账号", `<input name="cloud.userId" type="text" value="${escapeAttr(cloud.userId || "")}" autocomplete="username" placeholder="3-64 位字母、数字、下划线或短横线">`)}
+          ${field("密码", `<input name="cloud.password" type="password" autocomplete="current-password" placeholder="仅用于登录，不会保存到本机">`)}
+        </div>
+        <div class="button-row cloud-actions">
+          <button class="primary-button" type="button" data-action="cloud-login">登录云备份</button>
+          <button class="plain-button" type="button" data-action="cloud-register">创建账号并上传本机</button>
+        </div>
+        <small class="helper">登录后会保持 7 天可用；超过 7 天未同步，需重新输入密码。</small>
+      `}
     </div>
   `;
 }
@@ -2060,7 +2259,7 @@ function renderHolidayRuleCard() {
         <span>节假日识别</span>
         <strong>${hasSchedule ? `已接入 ${ui.year} 年调休表` : (sample ? "已接入 2026/2027 调休表" : "按每周工作日判断")}</strong>
       </div>
-      <p>${hasSchedule ? "法定节假日、休息日和调休上班会覆盖上方每周工作日设置；批量生成也会自动跳过放假日期。" : (sample ? `${ui.year} 年暂未内置调休表，会使用上方勾选的每周工作日。已有 2026/2027 年数据。` : "当前年份未内置国务院放假表，会使用上方勾选的每周工作日。")}</p>
+      <p>${hasSchedule ? "节假日和调休会覆盖每周工作日；批量处理自动跳过放假日期。" : (sample ? `该年份暂无调休表，使用上方每周工作日。已有 2026/2027 年数据。` : "当前年份暂无调休表，使用上方每周工作日。")}</p>
     </div>
   `;
 }
@@ -2328,9 +2527,25 @@ function saveSetupWizard(form) {
 }
 
 async function handleCloudAction(action, sourceTarget = null) {
+  if (action === "cloud-logout") {
+    state.cloud = normalizeCloudConfig({
+      ...(state.cloud || {}),
+      sessionToken: "",
+      tokenExpiresAt: "",
+      lastUsedAt: ""
+    });
+    saveState(state);
+    persist("已退出云备份账号");
+    render();
+    return;
+  }
+
   const auth = cloudConfigFromForm(sourceTarget);
-  if (!auth.userId || !auth.password) {
-    persist("请填写云备份账号和密码");
+  const actionName = action.replace("cloud-", "");
+  const hasSession = isCloudSessionValid(auth);
+  const needsPassword = actionName === "login" || actionName === "register" || !hasSession;
+  if (!auth.userId) {
+    persist("请填写云备份账号");
     render();
     return;
   }
@@ -2339,7 +2554,12 @@ async function handleCloudAction(action, sourceTarget = null) {
     render();
     return;
   }
-  if (auth.password.length < 6) {
+  if (needsPassword && !auth.password) {
+    persist(hasSession ? "请填写密码" : "请先登录云备份账号");
+    render();
+    return;
+  }
+  if (needsPassword && auth.password.length < 6) {
     persist("密码至少 6 位");
     render();
     return;
@@ -2348,30 +2568,44 @@ async function handleCloudAction(action, sourceTarget = null) {
     return;
   }
 
-  const actionName = action.replace("cloud-", "");
   const payload = {
     action: actionName,
     userId: auth.userId
   };
+  if (!needsPassword && auth.sessionToken) {
+    payload.sessionToken = auth.sessionToken;
+  }
   if (actionName === "register" || actionName === "push") {
     payload.data = createCloudSnapshot();
     payload.knownUpdatedAt = state.cloud?.remoteUpdatedAt || "";
   }
 
   try {
-    const encryptedPassword = await encryptCloudPassword(auth.password);
-    payload.passwordCipher = encryptedPassword.ciphertext;
-    payload.passwordKeyId = encryptedPassword.keyId;
-    const result = await postCloud(payload);
+    if (needsPassword) {
+      const encryptedPassword = await encryptCloudPassword(auth.password);
+      payload.passwordCipher = encryptedPassword.ciphertext;
+      payload.passwordKeyId = encryptedPassword.keyId;
+    }
+    let result = await postCloud(payload);
+    if (!result.ok && actionName === "push" && result.status === 409) {
+      const shouldOverwrite = window.confirm("云端已有更新。要用本机数据覆盖云端吗？覆盖后云端旧备份会被替换。");
+      if (shouldOverwrite) {
+        result = await postCloud({ ...payload, force: true });
+      }
+    }
     if (!result.ok) throw new Error(cloudErrorMessage(actionName, result.error, result.status));
-    state.cloud = normalizeCloudConfig({
+    const nextCloud = normalizeCloudConfig({
       ...state.cloud,
       userId: auth.userId,
       lastSyncAt: new Date().toISOString(),
-      remoteUpdatedAt: result.updatedAt || result.record?.updatedAt || state.cloud?.remoteUpdatedAt || ""
+      remoteUpdatedAt: result.updatedAt || result.record?.updatedAt || state.cloud?.remoteUpdatedAt || "",
+      sessionToken: result.sessionToken || auth.sessionToken || "",
+      tokenExpiresAt: result.tokenExpiresAt || auth.tokenExpiresAt || "",
+      lastUsedAt: new Date().toISOString()
     });
+    state.cloud = nextCloud;
     if (actionName === "pull" && result.data) {
-      applyCloudSnapshot(result.data, state.cloud);
+      applyCloudSnapshot(result.data, nextCloud);
       persist("已从云端恢复本机数据");
     } else {
       saveState(state);
@@ -2388,12 +2622,13 @@ function cloudErrorMessage(action, message, status) {
   if (message.includes("已存在")) return "该账号已存在，请直接登录";
   if (message.includes("账号或密码不正确")) return "账号或密码不正确，请检查后重试";
   if (message.includes("已停用")) return "账号已停用，暂时无法使用云备份";
-  if (message.includes("已有更新")) return "云端已有新数据，请先恢复或重新登录后再备份";
+  if (message.includes("已有更新")) return "云端已有新数据，本机数据未覆盖云端";
+  if (message.includes("已过期") || message.includes("重新登录")) return "登录已过期，请重新输入密码";
   if (message.includes("登录信息")) return message;
   if (message.includes("安全密钥")) return "云备份安全配置异常，请联系管理员";
   if (message.includes("超过")) return "数据量过大，请先导出本地备份或清理历史记录";
   if (status === 401) return action === "register" ? "注册失败，请更换账号名" : "登录失败，请检查账号和密码";
-  if (status === 409) return action === "register" ? "该账号已存在，请直接登录" : "数据冲突，请先恢复再备份";
+  if (status === 409) return action === "register" ? "该账号已存在，请直接登录" : "云端已有更新，本机数据未覆盖云端";
   if (status === 403) return "账号已被停用，暂时无法操作";
   if (status >= 500) return "服务器暂时不可用，请稍后再试";
   return message;
@@ -2417,11 +2652,29 @@ function cloudConfigFromForm(sourceTarget = null) {
 }
 
 function normalizeCloudConfig(cloud = {}) {
-  return {
+  const config = {
     userId: String(cloud.userId || "").trim(),
     lastSyncAt: cloud.lastSyncAt || "",
-    remoteUpdatedAt: cloud.remoteUpdatedAt || ""
+    remoteUpdatedAt: cloud.remoteUpdatedAt || "",
+    sessionToken: String(cloud.sessionToken || ""),
+    tokenExpiresAt: cloud.tokenExpiresAt || "",
+    lastUsedAt: cloud.lastUsedAt || ""
   };
+  if (!isCloudSessionValid(config)) {
+    config.sessionToken = "";
+    config.tokenExpiresAt = "";
+    config.lastUsedAt = "";
+  }
+  return config;
+}
+
+function isCloudSessionValid(cloud = {}) {
+  const token = String(cloud.sessionToken || "");
+  const expiresAt = Date.parse(cloud.tokenExpiresAt || "");
+  const lastUsedAt = Date.parse(cloud.lastUsedAt || cloud.tokenExpiresAt || "");
+  if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+  if (Number.isFinite(lastUsedAt) && Date.now() - lastUsedAt > CLOUD_SESSION_MAX_IDLE_MS) return false;
+  return true;
 }
 
 async function encryptCloudPassword(password) {
@@ -2452,10 +2705,16 @@ async function encryptCloudPassword(password) {
 }
 
 async function postCloud(payload) {
+  const body = { ...payload };
+  const sessionToken = body.sessionToken || "";
+  delete body.sessionToken;
   const response = await fetch(CLOUD_API_BASE, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
+    headers: {
+      "content-type": "application/json",
+      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
+    },
+    body: JSON.stringify(body)
   });
   const result = await response.json().catch(() => ({}));
   return response.ok ? { ok: true, ...result } : { ok: false, status: response.status, ...result };
@@ -2492,7 +2751,7 @@ function cloudActionNotice(actionName) {
   return ({
     login: "云备份账号已登录",
     register: "已创建账号并备份本机数据",
-    push: "已备份本机数据"
+    push: "已上传本机数据到云端"
   })[actionName] || "云同步完成";
 }
 

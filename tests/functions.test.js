@@ -67,6 +67,107 @@ test("admin login hides malformed ciphertext internals", async () => {
   assert.doesNotMatch(result.error, /base64|decode|atob/i);
 });
 
+test("cloud user session token can sync without resending password", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const env = { worktimeapp: kv };
+  const keyInfo = await publicKeyInfo(env);
+  const passwordCipher = await encryptPassword("worker-password-123", keyInfo.publicKey);
+  const initialData = cloudData([{ id: "entry_1", date: "2026-05-01", totalHours: 8 }]);
+
+  const registerResponse = await cloudRequest(env, {
+    action: "register",
+    userId: "worker_1",
+    passwordCipher,
+    data: initialData
+  });
+  const registered = await registerResponse.json();
+  assert.equal(registerResponse.status, 200);
+  assert.match(registered.sessionToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  assert.ok(registered.tokenExpiresAt);
+
+  const pushResponse = await cloudRequest(env, {
+    action: "push",
+    userId: "worker_1",
+    knownUpdatedAt: registered.updatedAt,
+    data: cloudData([{ id: "entry_2", date: "2026-05-02", totalHours: 9 }])
+  }, registered.sessionToken);
+  const pushed = await pushResponse.json();
+  assert.equal(pushResponse.status, 200);
+  assert.match(pushed.sessionToken, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
+  const pullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "worker_1"
+  }, pushed.sessionToken);
+  const pulled = await pullResponse.json();
+  assert.equal(pullResponse.status, 200);
+  assert.equal(pulled.data.entries[0].id, "entry_2");
+
+  const secondPasswordCipher = await encryptPassword("second-password-123", keyInfo.publicKey);
+  await cloudRequest(env, {
+    action: "register",
+    userId: "worker_2",
+    passwordCipher: secondPasswordCipher,
+    data: cloudData([])
+  });
+  const mismatchResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "worker_2"
+  }, pushed.sessionToken);
+  assert.equal(mismatchResponse.status, 401);
+});
+
+test("cloud push conflict can be forced after explicit overwrite", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const env = { worktimeapp: kv };
+  const keyInfo = await publicKeyInfo(env);
+  const passwordCipher = await encryptPassword("worker-password-456", keyInfo.publicKey);
+
+  const registerResponse = await cloudRequest(env, {
+    action: "register",
+    userId: "worker_3",
+    passwordCipher,
+    data: cloudData([{ id: "base", date: "2026-05-01", totalHours: 8 }])
+  });
+  const registered = await registerResponse.json();
+
+  const firstPushResponse = await cloudRequest(env, {
+    action: "push",
+    userId: "worker_3",
+    knownUpdatedAt: registered.updatedAt,
+    data: cloudData([{ id: "server_new", date: "2026-05-02", totalHours: 8 }])
+  }, registered.sessionToken);
+  const firstPush = await firstPushResponse.json();
+  assert.equal(firstPushResponse.status, 200);
+
+  const conflictResponse = await cloudRequest(env, {
+    action: "push",
+    userId: "worker_3",
+    knownUpdatedAt: "2026-01-01T00:00:00.000Z",
+    data: cloudData([{ id: "local_old", date: "2026-05-03", totalHours: 8 }])
+  }, firstPush.sessionToken);
+  assert.equal(conflictResponse.status, 409);
+
+  const forcedResponse = await cloudRequest(env, {
+    action: "push",
+    userId: "worker_3",
+    knownUpdatedAt: "2026-01-01T00:00:00.000Z",
+    force: true,
+    data: cloudData([{ id: "local_forced", date: "2026-05-04", totalHours: 8 }])
+  }, firstPush.sessionToken);
+  const forced = await forcedResponse.json();
+  assert.equal(forcedResponse.status, 200);
+
+  const pullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "worker_3"
+  }, forced.sessionToken);
+  const pulled = await pullResponse.json();
+  assert.equal(pulled.data.entries[0].id, "local_forced");
+});
+
 async function generatePrivateJwk() {
   const pair = await crypto.subtle.generateKey(
     {
@@ -79,6 +180,36 @@ async function generatePrivateJwk() {
     ["encrypt", "decrypt"]
   );
   return crypto.subtle.exportKey("jwk", pair.privateKey);
+}
+
+async function publicKeyInfo(env) {
+  const keyResponse = await api.fetch(new Request("https://example.com/api/cloud/key"), env);
+  assert.equal(keyResponse.status, 200);
+  return keyResponse.json();
+}
+
+async function cloudRequest(env, body, sessionToken = "") {
+  return api.fetch(new Request("https://example.com/api/cloud", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
+    },
+    body: JSON.stringify(body)
+  }), env);
+}
+
+function cloudData(entries) {
+  return {
+    app: "worktimeapp",
+    version: 2,
+    exportedAt: "2026-05-13T00:00:00.000Z",
+    settings: {},
+    entries,
+    adjustments: [],
+    activeView: "calendar",
+    backup: {}
+  };
 }
 
 async function encryptPassword(password, publicJwk) {

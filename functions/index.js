@@ -7,6 +7,7 @@ const USAGE_KEY = "usage:daily";
 const MAX_DATA_BYTES = 1_800_000;
 const HASH_ITERATIONS = 120_000;
 const ADMIN_SESSION_TTL_SECONDS = 2 * 60 * 60;
+const USER_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export default {
   async fetch(request, env = {}) {
@@ -38,14 +39,13 @@ async function handleCloud(request, env, url) {
   const userId = normalizeUserId(payload.userId);
   if (!userId) return json({ error: "用户 ID 仅支持 3-64 位字母、数字、下划线或短横线" }, 400);
 
-  const password = await decryptPasswordPayload(kv, payload);
-  if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
-
   const client = getClientInfo(request);
   const key = userKey(userId);
   const existing = await readRecord(kv, key);
 
   if (action === "register") {
+    const password = await decryptPasswordPayload(kv, payload);
+    if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
     if (existing) return json({ error: "该账号已存在，请直接登录" }, 409);
     const data = sanitizeData(payload.data);
     const passwordInfo = await hashPassword(password);
@@ -69,17 +69,27 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, record);
     await updateUserIndex(kv, userId, record);
     await recordUsage(kv, "register", client, userId);
-    return json(publicRecord(record));
+    return json({ ...publicRecord(record), ...(await userSessionResponse(kv, userId)) });
   }
 
   if (!existing) {
     await recordUsage(kv, "login_failed", client, userId);
     return json({ error: "账号或密码不正确" }, 401);
   }
-  const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
-  if (!verified) {
+  const session = action === "login" ? null : await verifyUserSession(request, kv, payload.sessionToken);
+  if (session && session.sub !== userId) {
     await recordUsage(kv, "login_failed", client, userId);
-    return json({ error: "账号或密码不正确" }, 401);
+    return json({ error: "登录信息已过期，请重新登录" }, 401);
+  }
+  if (!session) {
+    if (!payload.passwordCipher) return json({ error: "登录信息已过期，请重新登录" }, 401);
+    const password = await decryptPasswordPayload(kv, payload);
+    if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
+    const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
+    if (!verified) {
+      await recordUsage(kv, "login_failed", client, userId);
+      return json({ error: "账号或密码不正确" }, 401);
+    }
   }
   if (existing.status === "disabled") return json({ error: "账号已停用，暂时无法云备份" }, 403);
 
@@ -87,12 +97,12 @@ async function handleCloud(request, env, url) {
 
   if (action === "login") {
     await recordUsage(kv, "login", client, userId);
-    return json(publicRecord(touched));
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId)) });
   }
 
   if (action === "pull") {
     await recordUsage(kv, "pull", client, userId);
-    return json({ ...publicRecord(touched), data: touched.data || null });
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId)), data: touched.data || null });
   }
 
   if (action === "push") {
@@ -115,7 +125,7 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, next);
     await updateUserIndex(kv, userId, next);
     await recordUsage(kv, "push", client, userId);
-    return json(publicRecord(next));
+    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId)) });
   }
 
   return json({ error: "未知操作" }, 400);
@@ -393,6 +403,26 @@ async function signAdminSession(kv, username) {
   return `${body}.${signature}`;
 }
 
+async function userSessionResponse(kv, userId) {
+  return {
+    sessionToken: await signUserSession(kv, userId),
+    tokenExpiresAt: new Date(Date.now() + USER_SESSION_TTL_SECONDS * 1000).toISOString()
+  };
+}
+
+async function signUserSession(kv, userId) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: userId,
+    role: "user",
+    iat: now,
+    exp: now + USER_SESSION_TTL_SECONDS
+  };
+  const body = base64UrlText(JSON.stringify(payload));
+  const signature = await hmacSign(kv, body);
+  return `${body}.${signature}`;
+}
+
 async function verifyAdminSession(request, kv) {
   const header = request.headers.get("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -408,6 +438,25 @@ async function verifyAdminSession(request, kv) {
   }
   if (!payload || payload.role !== "admin") return null;
   if (Number(payload.exp || 0) < Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
+async function verifyUserSession(request, kv, fallbackToken = "") {
+  const header = request.headers.get("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : String(fallbackToken || "");
+  const [body, signature] = token.split(".");
+  if (!body || !signature) return null;
+  const expected = await hmacSign(kv, body);
+  if (!constantTimeEqual(signature, expected)) return null;
+  let payload;
+  try {
+    payload = parseMaybeJson(new TextDecoder().decode(base64UrlToBytes(body)));
+  } catch {
+    return null;
+  }
+  if (!payload || payload.role !== "user") return null;
+  if (Number(payload.exp || 0) < Math.floor(Date.now() / 1000)) return null;
+  if (!normalizeUserId(payload.sub)) return null;
   return payload;
 }
 

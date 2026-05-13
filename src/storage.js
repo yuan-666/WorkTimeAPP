@@ -13,7 +13,10 @@ export const initialState = {
   cloud: {
     userId: "",
     lastSyncAt: "",
-    remoteUpdatedAt: ""
+    remoteUpdatedAt: "",
+    sessionToken: "",
+    tokenExpiresAt: "",
+    lastUsedAt: ""
   }
 };
 
@@ -51,7 +54,10 @@ export function saveState(state) {
     cloud: {
       userId: String(state.cloud?.userId || ""),
       lastSyncAt: state.cloud?.lastSyncAt || "",
-      remoteUpdatedAt: state.cloud?.remoteUpdatedAt || ""
+      remoteUpdatedAt: state.cloud?.remoteUpdatedAt || "",
+      sessionToken: state.cloud?.sessionToken || "",
+      tokenExpiresAt: state.cloud?.tokenExpiresAt || "",
+      lastUsedAt: state.cloud?.lastUsedAt || ""
     }
   }));
 }
