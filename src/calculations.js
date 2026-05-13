@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS = {
   weekStart: 1,
   themeMode: "system",
   autoDayType: true,
+  autoFillWorkday: true,
   shiftPresets: [
     {
       id: "day",
@@ -730,9 +731,13 @@ export function calculateAdjustmentTotals(adjustments = [], year, monthIndex) {
 export function calculateMonthlyPayroll(entries = [], adjustments = [], settings = DEFAULT_SETTINGS, year, monthIndex) {
   const merged = mergeSettings(settings);
   const month = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
-  const monthEntries = entries
+  let monthEntries = entries
     .filter((entry) => monthKeyFromDate(entry.date) === month)
     .map((entry) => normalizeEntry(entry, merged));
+  if (merged.autoFillWorkday && merged.salaryMode !== SALARY_MODES.HOURLY) {
+    const autoFilled = getAutoFilledEntries(year, monthIndex, entries, merged);
+    monthEntries = monthEntries.concat(autoFilled.map((entry) => normalizeEntry(entry, merged)));
+  }
 
   const attendanceDays = new Set(monthEntries.filter((entry) => entry.totalHours > 0).map((entry) => entry.date)).size;
   const totalHours = round2(monthEntries.reduce((sum, entry) => sum + entry.totalHours, 0));
@@ -1143,6 +1148,36 @@ export function getUnloggedDays(year, monthIndex, entries, settings = DEFAULT_SE
     }
   }
   return unlogged;
+}
+
+export function getAutoFilledEntries(year, monthIndex, entries, settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  if (!merged.autoFillWorkday) return [];
+  if (merged.salaryMode === SALARY_MODES.HOURLY) return [];
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const entryDates = new Set(entries.map((entry) => entry.date));
+  const today = formatDate(new Date());
+  const normalHours = clampNumber(merged.normalHoursPerDay, 0, WORK_LIMITS.maxRegularHours, LEGAL_RULES.dailyStandardHours);
+  const autoEntries = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, monthIndex, day);
+    const dateText = formatDate(date);
+    if (dateText > today) break;
+    if (entryDates.has(dateText)) continue;
+    const dayType = inferDayType(dateText, merged);
+    if (dayType !== "workday") continue;
+    autoEntries.push({
+      date: dateText,
+      recordMode: RECORD_MODES.HOURS,
+      dayType,
+      regularHours: normalHours,
+      overtimeHours: 0,
+      totalHours: normalHours,
+      source: "auto-fill",
+      note: "默认工时"
+    });
+  }
+  return autoEntries;
 }
 
 function addDays(date, days) {

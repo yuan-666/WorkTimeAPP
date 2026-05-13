@@ -1,34 +1,48 @@
-# Release Notes - v0.2.7
+# Release Notes - v0.2.8
 
 发布日期：2026-05-13
 
 ## 概览
 
-`v0.2.7` 专门修复“发布后仍显示旧版本”的问题。线上主脚本已经是新版，但旧 PWA/浏览器缓存仍可能继续加载 `v0.2.5` 的无版本号资源。本版本给入口脚本、样式、模块导入和 Service Worker 注册都加上版本参数，让浏览器必须请求新资源。
+`v0.2.8` 是一次大规模的交互和计算修复版本，解决了批量添加失效、工资计算需要手动登记每天、手机端体验差等核心问题。新增自动工时、上班方式选择、手机二级页面等功能。
 
 ## 重点改进
 
-- `index.html` 中的 `styles.css` 和 `src/app.js` 加入 `v=0.2.7`。
-- `src/app.js` 的模块导入加入版本参数，避免主脚本新版但依赖模块仍走旧缓存。
-- Service Worker 注册改为 `./sw.js?v=0.2.7`，并设置 `updateViaCache: "none"`。
-- Service Worker 缓存名更新为 `worktimeapp-v19`，缓存版本化静态资源。
-- Service Worker 跳过 `/api/` 请求，云同步和后台接口不再进入离线缓存逻辑。
-- 独立时间轴 `changelog.html` 补齐 v0.2.5、v0.2.6 和 v0.2.7。
+### 批量添加彻底修复
+- 放弃 form submit 方案，改用 click 事件处理器直接读取表单数据，彻底解决"Form submission canceled because the form is not connected"问题。
+- 所有条件字段（添加规则、加班小时、班次选择）始终显示，切换添加方式不再触发重新渲染。
 
-## 验证
+### 自动工时（autoFillWorkday）
+- 新增 `autoFillWorkday` 设置，默认开启。
+- 无记录的工作日自动算作 8 小时正班，月度工资和报表自动包含。
+- 日历对自动补登的天数显示"默认"标记和虚线边框。
+- 不再需要每天手动登记上班，只需记录加班、请假和休息。
 
-- `npm test`
-- `npm run build`
-- `node --check src/app.js`
-- `node --check src/calculations.js`
-- `node --check src/storage.js`
-- `node --check src/export.js`
-- `node --check functions/index.js`
-- `node --check sw.js`
-- `admin.html` 内联脚本解析
-- `git diff --check`
-- 线上 `https://time.yuan6.cn/src/app.js`、`https://time.yuan6.cn/sw.js` 版本核对
+### 上班方式选择
+- 设置页新增"上班方式"选择器：固定白班、固定夜班、轮班、自定义。
+- 选择后自动配置对应班次模板（含加班班次和休息日加班）。
+- 新增"默认班次"选择器，决定工作日自动使用哪个模板。
+
+### 手机端体验优化
+- 设置页改为二级页面：点击分组进入独立详情页，顶部有返回箭头。
+- 主页面切换增加 slide-in 过渡动画。
+- 底部导航在子页面显示返回按钮+页面标题。
+- 明暗模式切换改为 SVG 太阳/月亮图标。
+
+### 其他修复
+- 修复调休上班日标签重复显示。
+- 修复周合计行工资显示为 ¥0.00。
+- 修复班次管理保存后丢失加班班次。
+- 修复云备份缺少具体错误提示。
+- 修复侧边栏版本信息文字溢出。
+
+## 测试
+
+- 41 项测试全部通过（新增 5 项 autoFillWorkday 测试）。
+- 所有 JS 文件语法检查通过。
+- `npm run build` 成功。
+- `git diff --check` 无空白错误。
 
 ## Git 标签
 
-推荐标签：`v0.2.7`
+推荐标签：`v0.2.8`

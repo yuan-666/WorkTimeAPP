@@ -531,8 +531,31 @@ h3 {
   background: var(--holiday-soft);
 }
 
+.theme-button {
+  width: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-icon {
+  display: block;
+}
+
 .day-cell.is-adjusted {
   border-style: dashed;
+}
+
+.day-cell.is-auto-filled {
+  border-style: dashed;
+  border-color: rgba(23, 107, 91, 0.35);
+}
+
+.auto-fill-marker {
+  border-color: rgba(23, 107, 91, 0.24) !important;
+  color: var(--accent) !important;
+  font-size: 10px !important;
 }
 
 .day-number,
@@ -1235,6 +1258,10 @@ output {
   gap: 10px;
 }
 
+.preset-hidden {
+  display: none;
+}
+
 .preset-row {
   display: grid;
   grid-template-columns: 1.05fr 0.75fr 0.95fr repeat(4, minmax(0, 0.78fr));
@@ -1396,6 +1423,31 @@ output {
     padding: 10px 4px;
   }
 
+  .mobile-nav-back {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+  }
+
+  .mobile-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font-size: 15px;
+    font-weight: 600;
+    padding: 8px 0;
+  }
+
+  .mobile-page-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
   .mobile-footer-strip {
     display: flex;
     grid-column: 1 / -1;
@@ -1425,6 +1477,12 @@ output {
 @media (max-width: 720px) {
   .main {
     padding: 18px 12px 92px;
+    animation: pageIn 200ms ease;
+  }
+
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateX(12px); }
+    to { opacity: 1; transform: translateX(0); }
   }
 
   .topbar,
@@ -1507,6 +1565,10 @@ output {
   .calendar-panel {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .calendar-list-panel {
+    overflow-x: hidden;
   }
 
   .calendar-panel,
@@ -1598,6 +1660,67 @@ output {
   }
 }
 
+/* About section */
+.about-section {
+  text-align: center;
+}
+
+.about-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.about-logo strong {
+  font-size: 18px;
+  display: block;
+}
+
+.about-logo span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.about-desc {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.about-links {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  margin-bottom: 16px;
+}
+
+.about-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: background 150ms;
+}
+
+.about-link:active {
+  background: var(--surface-2);
+}
+
+.about-link span:first-child {
+  font-size: 15px;
+}
+
+.about-copyright {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* Settings groups */
 .settings-group {
   margin-bottom: 12px;
@@ -1663,6 +1786,133 @@ output {
   margin-top: 4px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
+}
+
+/* Settings detail page (mobile secondary page) */
+.settings-detail-page {
+  animation: pageIn 200ms ease;
+}
+
+.settings-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-detail-header h2 {
+  margin: 0;
+  font-size: 18px;
+  flex: 1;
+  text-align: center;
+}
+
+.mobile-back-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.mobile-back-btn:active {
+  background: var(--surface-2);
+}
+
+.settings-detail-save {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-detail-save .primary-button {
+  width: 100%;
+}
+
+/* Mobile settings menu */
+.settings-mobile-menu {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-mobile-group:last-child {
+  border-bottom: 0;
+}
+
+.settings-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  transition: background 150ms;
+}
+
+.settings-menu-item:active {
+  background: var(--surface-2);
+}
+
+.settings-menu-item div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-menu-item strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.settings-menu-item span {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-menu-arrow {
+  font-size: 20px;
+  color: var(--muted);
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+}
+
+.settings-mobile-body {
+  padding: 8px 14px 16px;
+  background: var(--surface-soft);
+  border-top: 1px solid var(--line);
+  animation: slideDown 200ms ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-mobile-save {
+  margin-top: 16px;
+  padding: 0 14px;
+}
+
+.settings-mobile-save .primary-button {
+  width: 100%;
 }
 
 .cloud-sync-card {
@@ -2233,9 +2483,9 @@ output {
 .sidebar-release-link {
   min-height: 40px;
   width: 100%;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 0 12px;
   border: 1px solid var(--line);
@@ -2245,6 +2495,7 @@ output {
   text-decoration: none;
   box-shadow: inset 0 1px 0 var(--inset-highlight);
   transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms ease, background 180ms ease;
+  overflow: hidden;
 }
 
 .sidebar-release-link:hover {
@@ -2259,6 +2510,7 @@ output {
   gap: 5px;
   min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .footer-stat strong {
@@ -2266,12 +2518,15 @@ output {
   font-family: "SF Mono", "Cascadia Code", "Menlo", monospace;
   font-size: 14px;
   font-weight: 800;
+  flex-shrink: 0;
 }
 
 .footer-stat em {
   color: var(--muted);
   font-size: 11px;
   font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .footer-stat-action {
@@ -2302,6 +2557,7 @@ output {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-footer-bottom > span {
@@ -2400,6 +2656,127 @@ output {
   color: var(--accent);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* ===== 日历列表视图（移动端） ===== */
+.calendar-list-panel {
+  padding: 8px;
+}
+
+.calendar-list {
+  display: grid;
+  gap: 4px;
+}
+
+.calendar-list-item {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 150ms, background 150ms;
+}
+
+.calendar-list-item.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.calendar-list-item.is-today .list-date strong {
+  color: var(--accent);
+}
+
+.calendar-list-item.has-data {
+  background: var(--surface-soft);
+}
+
+.calendar-list-item.is-holiday {
+  border-color: rgba(191, 111, 47, 0.28);
+  background: var(--holiday-soft);
+}
+
+.calendar-list-item.is-restday {
+  background: var(--surface-rest);
+}
+
+.list-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.list-date strong {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.list-date span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.list-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.list-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.list-tag.holiday-tag {
+  background: rgba(191, 111, 47, 0.12);
+  color: var(--accent-2);
+}
+
+.list-tag.adjust-tag {
+  border: 1px dashed rgba(191, 111, 47, 0.3);
+  color: var(--accent-2);
+}
+
+.list-tag.auto-tag {
+  background: rgba(23, 107, 91, 0.1);
+  color: var(--accent);
+}
+
+.list-entries {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.list-numbers {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.list-numbers strong {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-numbers span {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* ===== 深色模式 ===== */

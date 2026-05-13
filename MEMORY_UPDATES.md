@@ -18,6 +18,35 @@
 - 后续建议：
 ```
 
+## 2026-05-13 18:00 CST - v0.2.8 发布：批量添加修复、自动工时、手机二级页面
+
+- 触发原因：用户反馈批量添加仍然报错"Form submission canceled"、班次管理加班班次丢失、设置页不是二级页面、版本日志需要完善后发布到 GitHub。
+- 修改文件：`src/app.js`、`src/calculations.js`、`styles.css`、`tests/calculations.test.js`、`index.html`、`package.json`、`sw.js`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`README.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 批量添加彻底放弃 form submit 方案，改用 `data-action="bulk-add"` click 事件处理器直接读取表单数据，彻底避免表单断开问题。
+  - 班次管理修复：所有班次模板（含休息日加班）保留在表单中，仅视觉隐藏；恢复"默认班次"选择器；新增 `detectWorkType()` 函数自动识别当前上班方式。
+  - 移动端设置页改为真正的二级页面：点击分组进入独立详情页，顶部有返回箭头按钮。
+  - 版本更新到 v0.2.8，Service Worker 缓存名更新到 `worktimeapp-v20`。
+  - CHANGELOG.md、RELEASE_NOTES.md、README.md 补充完整 v0.2.8 发布说明。
+- 验证结果：`npm test` 41 项全部通过；所有 JS 文件语法检查通过；`npm run build` 成功；`git diff --check` 通过。
+- 风险/注意：批量添加从 form submit 改为 click 事件，如果后续有其他表单交互问题需要检查事件处理器。
+- 后续建议：发布后用真机检查批量添加、班次管理、设置二级页面的完整流程。
+
+## 2026-05-13 15:30 CST - v0.2.8 五项修复：侧边栏溢出、批量补登、登录错误、默认工时、手机列表
+
+- 触发原因：用户反馈侧边栏版本文字错乱、批量补全工时无反应、登录缺少具体错误提示、工资计算需要手动添加每天8小时、手机日历需要横向滚动不方便。
+- 修改文件：`src/app.js`、`src/calculations.js`、`styles.css`、`tests/calculations.test.js`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 侧边栏底部版本信息区域增加 `overflow: hidden`、`flex-shrink: 0`、`text-overflow: ellipsis`，防止文字溢出重叠。
+  - 批量补全工时增加验证失败计数反馈，`bulkConfigFromForm` 增加 `addKind` 合法性校验和日期默认值兜底，避免静默跳过。
+  - 云备份登录/注册/备份/恢复的错误处理改为解析服务端具体错误码和消息，区分账号不存在、密码错误、账号已停用、数据冲突、服务不可用等场景。
+  - 新增 `autoFillWorkday` 设置（默认开启）：无记录的工作日自动算作 8 小时正班，`calculateMonthlyPayroll` 在计算时自动合并虚拟条目；设置页新增开关；日历格子对自动补登的天数显示"默认"标记和虚线边框；小时计算模式下自动跳过。
+  - 手机端（≤720px）日历从 7 列网格改为按天列表视图，每行显示日期/星期/日期类型/工时/工资，点击选中日期并打开底部登记抽屉。
+  - 现有测试用例补加 `autoFillWorkday: false` 以保持原有断言不变；新增 5 个测试覆盖 `getAutoFilledEntries` 和 `autoFillWorkday` 开关。
+- 验证结果：`npm test` 41 项全部通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/build.mjs` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过。
+- 风险/注意：`autoFillWorkday` 默认开启会改变现有用户的月度工资显示（无记录工作日自动计入 8 小时），首次加载时用户可能看到工资变化；可在设置中关闭。手机端列表视图不再显示周合计行，后续可考虑在列表底部添加月合计。
+- 后续建议：发布后用真机检查列表视图的点击和抽屉交互、自动补登标记的显示效果；确认 `autoFillWorkday` 开关对各薪资模式的计算影响。
+
 ## 2026-05-13 09:10 CST - v0.2.7 旧缓存导致版本不生效修复
 
 - 触发原因：用户反馈 GitHub Release 已发布但线上仍显示 `v0.2.5`，要求检查是不是哪里没生效。

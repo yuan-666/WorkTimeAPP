@@ -17,6 +17,7 @@ import {
   buildCalendarDays,
   buildEntryFromShiftPreset,
   buildOvertimeEntry,
+  getAutoFilledEntries,
   getHolidayInfo,
   getUnloggedDays,
   hasBaseWorkEntryForDate,
@@ -150,7 +151,8 @@ test("comprehensive mode pays excess hours and holiday hours as overtime", () =>
     comprehensiveHourlyRate: 40,
     comprehensiveTargetHours: 10,
     comprehensiveOvertimeMultiplier: 1.5,
-    holidayMultiplier: 3
+    holidayMultiplier: 3,
+    autoFillWorkday: false
   });
   const payroll = calculateMonthlyPayroll([
     { date: "2026-05-01", recordMode: "hours", dayType: "workday", totalHours: 12, regularHours: 12, overtimeHours: 0 },
@@ -205,7 +207,8 @@ test("comprehensive mode derives hourly rate from monthly wage and uses configur
     standardMonthlyHours: LEGAL_RULES.wageHourlyDivisor,
     comprehensiveHourlyRate: 0,
     comprehensiveTargetHours: 10,
-    comprehensiveOvertimeMultiplier: 1
+    comprehensiveOvertimeMultiplier: 1,
+    autoFillWorkday: false
   });
   const payroll = calculateMonthlyPayroll([
     { date: "2026-05-01", recordMode: "hours", dayType: "workday", totalHours: 12 },
@@ -341,7 +344,8 @@ test("monthly base work entries do not treat overtime-only entries as existing b
   const settings = mergeSettings({
     salaryMode: SALARY_MODES.REGULAR_OVERTIME,
     regularHourlyRate: 30,
-    normalHoursPerDay: 8
+    normalHoursPerDay: 8,
+    autoFillWorkday: false
   });
   const overtime = buildOvertimeEntry("2026-05-06", 2, settings);
   assert.equal(overtime.regularHours, 0);
@@ -366,7 +370,8 @@ test("base plus overtime monthly base entries count attendance without duplicati
     baseSalary: 6000,
     baseOvertimeRate: 40,
     normalHoursPerDay: 8,
-    overtimeMultiplier: 1.5
+    overtimeMultiplier: 1.5,
+    autoFillWorkday: false
   });
   const base = buildBaseWorkEntry("2026-05-06", settings);
   const overtime = buildOvertimeEntry("2026-05-06", 2, settings);
@@ -656,7 +661,8 @@ test("monthly payroll with mixed work and leave entries", () => {
     salaryMode: SALARY_MODES.REGULAR_OVERTIME,
     regularHourlyRate: 40,
     overtimeMultiplier: 1.5,
-    restDayMultiplier: 2
+    restDayMultiplier: 2,
+    autoFillWorkday: false
   });
 
   const entries = [
@@ -741,7 +747,8 @@ test("comprehensive mode with multiple months", () => {
     comprehensiveHourlyRate: 35,
     comprehensiveTargetHours: 160,
     comprehensiveOvertimeMultiplier: 1.5,
-    holidayMultiplier: 3
+    holidayMultiplier: 3,
+    autoFillWorkday: false
   });
 
   // Month 1: 170 hours (10 overtime)
@@ -821,4 +828,80 @@ test("getUnloggedDays finds workdays missing entries up to today", () => {
   for (const date of unlogged) {
     assert.ok(date <= today, `date ${date} should be <= today`);
   }
+});
+
+test("autoFillWorkday generates entries for workdays without records", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    autoFillWorkday: true,
+    normalHoursPerDay: 8,
+    workweek: [1, 2, 3, 4, 5]
+  });
+  const entries = [
+    { date: "2026-05-04", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 8, overtimeHours: 2, totalHours: 10 }
+  ];
+  const autoFilled = getAutoFilledEntries(2026, 4, entries, settings);
+  // Should not include 05-04 (has entry) or 05-03 (Sunday = restday)
+  assert.ok(!autoFilled.some((e) => e.date === "2026-05-04"), "day with entry excluded");
+  assert.ok(!autoFilled.some((e) => e.date === "2026-05-03"), "restday excluded");
+  // All auto-filled entries should be 8 hours
+  for (const entry of autoFilled) {
+    assert.equal(entry.totalHours, 8);
+    assert.equal(entry.source, "auto-fill");
+  }
+});
+
+test("autoFillWorkday disabled returns empty auto entries", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    autoFillWorkday: false,
+    normalHoursPerDay: 8
+  });
+  const autoFilled = getAutoFilledEntries(2026, 4, [], settings);
+  assert.equal(autoFilled.length, 0);
+});
+
+test("autoFillWorkday skipped for hourly mode", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.HOURLY,
+    autoFillWorkday: true,
+    hourlyRate: 30
+  });
+  const autoFilled = getAutoFilledEntries(2026, 4, [], settings);
+  assert.equal(autoFilled.length, 0);
+});
+
+test("autoFillWorkday includes auto entries in monthly payroll", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    autoFillWorkday: true,
+    regularHourlyRate: 50,
+    normalHoursPerDay: 8,
+    overtimeMultiplier: 1.5,
+    workweek: [1, 2, 3, 4, 5]
+  });
+  // Only one entry with overtime, rest are auto-filled
+  const entries = [
+    { date: "2026-05-04", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 8, overtimeHours: 2, totalHours: 10 }
+  ];
+  const payroll = calculateMonthlyPayroll(entries, [], settings, 2026, 4);
+  // Should include the manual entry + auto-filled workdays
+  assert.ok(payroll.totalHours > 10, "auto-filled hours included");
+  assert.ok(payroll.regularPay > 400, "auto-filled regular pay included");
+});
+
+test("autoFillWorkday disabled only counts recorded entries", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    autoFillWorkday: false,
+    regularHourlyRate: 50,
+    normalHoursPerDay: 8,
+    workweek: [1, 2, 3, 4, 5]
+  });
+  const entries = [
+    { date: "2026-05-04", recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: 8, overtimeHours: 0, totalHours: 8 }
+  ];
+  const payroll = calculateMonthlyPayroll(entries, [], settings, 2026, 4);
+  assert.equal(payroll.totalHours, 8);
+  assert.equal(payroll.regularPay, 400);
 });

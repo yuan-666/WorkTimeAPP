@@ -15,6 +15,7 @@ import {
   calculateTimeHours,
   deriveSalaryInsights,
   formatDate,
+  getAutoFilledEntries,
   getHolidayInfo,
   getShiftPreset,
   getUnloggedDays,
@@ -29,21 +30,21 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.2.7";
+} from "./calculations.js?v=0.2.8";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.2.7";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.7";
+} from "./storage.js?v=0.2.8";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.2.8";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.2.7";
-const RELEASE_COUNT = 17;
+const APP_VERSION = "v0.2.8";
+const RELEASE_COUNT = 18;
 const CLOUD_API_BASE = "/api/cloud";
 let state = loadState();
 let ui = {
@@ -58,6 +59,7 @@ let ui = {
   entrySheetOpen: false,
   bulkMode: "add",
   bulkAddKind: "",
+  settingsSheetOpen: "",
   notice: "",
   lastDeleted: null,
   recordsSearch: "",
@@ -244,6 +246,16 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
+  if (action === "close-settings-sheet") {
+    ui.settingsSheetOpen = "";
+    render();
+  }
+
+  if (action === "open-settings-sheet") {
+    ui.settingsSheetOpen = target.dataset.group || "";
+    render();
+  }
+
   if (action === "toggle-entry-advanced") {
     ui.entryAdvanced = !ui.entryAdvanced;
     render();
@@ -275,6 +287,18 @@ document.addEventListener("click", async (event) => {
 
   if (action?.startsWith("cloud-")) {
     await handleCloudAction(action);
+    return;
+  }
+
+  if (action === "bulk-add") {
+    const form = document.querySelector("#bulk-form");
+    if (form) bulkAdd(form);
+    return;
+  }
+
+  if (action === "bulk-delete") {
+    const form = document.querySelector("#bulk-form");
+    if (form) bulkDelete(form);
     return;
   }
 
@@ -311,7 +335,6 @@ document.addEventListener("submit", (event) => {
   const formId = form.getAttribute("id");
   if (formId === "entry-form") saveEntry(form, event.submitter?.value);
   if (formId === "adjustment-form") saveAdjustment(form);
-  if (formId === "bulk-form") bulkApply(form, event.submitter?.value);
   if (formId === "settings-form") saveSettings(form);
   if (formId === "setup-form") saveSetupWizard(form);
 });
@@ -329,8 +352,6 @@ document.addEventListener("input", (event) => {
   if (event.target.closest("#bulk-form")) {
     if (event.target.name === "addKind") {
       ui.bulkAddKind = event.target.value;
-      render();
-      return;
     }
     updateBulkPreview();
   }
@@ -366,7 +387,7 @@ document.addEventListener("change", async (event) => {
   if (event.target.closest("#bulk-form")) {
     if (event.target.name === "addKind") {
       ui.bulkAddKind = event.target.value;
-      render();
+      updateBulkPreview();
       return;
     }
     updateBulkPreview();
@@ -391,6 +412,20 @@ document.addEventListener("change", async (event) => {
       salaryMode: event.target.value
     });
     render();
+    return;
+  }
+
+  if (event.target.name === "workType" && settingsForm) {
+    const workType = event.target.value;
+    if (workType !== "custom") {
+      const newPresets = defaultPresetsForWorkType(workType);
+      state.settings = limitSettings({
+        ...state.settings,
+        shiftPresets: newPresets,
+        defaultPresetId: newPresets.find((p) => p.dayType !== "restday")?.id || "day"
+      });
+      render();
+    }
     return;
   }
 
@@ -425,7 +460,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.7", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.2.8", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -518,7 +553,7 @@ function renderSetupWizard() {
 
           <div class="setup-footer">
             <div class="button-row">
-              <button class="plain-button" type="button" data-action="toggle-theme">${themeModeLabel(state.settings.themeMode)}</button>
+              <button class="plain-button theme-button" type="button" data-action="toggle-theme" title="${themeModeLabel(state.settings.themeMode)}">${themeIcon(state.settings.themeMode)}</button>
               <button class="plain-button" type="button" data-action="skip-setup">稍后设置</button>
             </div>
             <button class="primary-button" type="submit">开始使用</button>
@@ -561,6 +596,20 @@ function renderSidebar() {
 }
 
 function renderMobileNav() {
+  const mainViews = ["calendar", "records", "reports"];
+  const isSubPage = !mainViews.includes(ui.view);
+  if (isSubPage) {
+    return `
+      <nav class="mobile-nav mobile-nav-back" aria-label="返回">
+        <button class="mobile-back-button" type="button" data-view="calendar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span>返回</span>
+        </button>
+        <span class="mobile-page-title">${viewTitle(ui.view)}</span>
+        <span></span>
+      </nav>
+    `;
+  }
   return `
     <nav class="mobile-nav" aria-label="底部导航">
       <div class="mobile-nav-row">
@@ -595,7 +644,7 @@ function renderTopbar() {
         <h1>${ui.viewTitle || viewTitle(ui.view)}</h1>
       </div>
       <div class="month-controls" aria-label="月份切换">
-        <button class="plain-button theme-button" type="button" data-action="toggle-theme">${themeModeLabel(state.settings.themeMode)}</button>
+        <button class="plain-button theme-button" type="button" data-action="toggle-theme" title="${themeModeLabel(state.settings.themeMode)}">${themeIcon(state.settings.themeMode)}</button>
         <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
         <button class="plain-button" type="button" data-action="today">今天</button>
         <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
@@ -676,17 +725,21 @@ function renderCalendarView() {
   const adjustmentsByDate = groupByDate(state.adjustments);
   const selectedEntries = entriesForDate(ui.selectedDate);
   const selectedAdjustments = adjustmentsForDate(ui.selectedDate);
+  const useListView = isMobileViewport();
   return `
     <div class="workspace calendar-layout">
       ${renderUnloggedPanel()}
-      <section class="calendar-panel" aria-label="日历">
-        <div class="weekday-grid">
-          ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
-        </div>
-        <div class="calendar-grid">
-          ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
-        </div>
-      </section>
+      ${useListView
+        ? renderCalendarListView(days, entriesByDate, adjustmentsByDate)
+        : `<section class="calendar-panel" aria-label="日历">
+            <div class="weekday-grid">
+              ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
+            </div>
+            <div class="calendar-grid">
+              ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
+            </div>
+          </section>`
+      }
       ${ui.entrySheetOpen ? `<button class="entry-sheet-backdrop" type="button" data-action="close-entry-sheet" aria-label="关闭登记面板"></button>` : ""}
       <section class="detail-panel day-entry-panel ${ui.entrySheetOpen ? "is-entry-sheet-open" : ""}" aria-label="每日记录">
         <div class="sheet-handle" aria-hidden="true"></div>
@@ -710,6 +763,52 @@ function renderCalendarView() {
   `;
 }
 
+function renderCalendarListView(days, entriesByDate, adjustmentsByDate) {
+  const inMonthDays = days.filter((day) => day.inMonth);
+  const items = inMonthDays.map((day) => {
+    const entries = entriesByDate.get(day.date) || [];
+    const adjustments = adjustmentsByDate.get(day.date) || [];
+    const normalized = entries.map((entry) => normalizeEntry(entry, state.settings));
+    const hours = round2(normalized.reduce((sum, entry) => sum + entry.totalHours, 0));
+    const pay = round2(entries.reduce((sum, entry) => sum + calculateEntryPay(entry, state.settings).totalPay, 0));
+    const dayType = inferDayType(day.date, state.settings);
+    const holiday = day.holiday || getHolidayInfo(day.date);
+    const marker = holiday?.marker || (dayType === "restday" ? "休" : "");
+    const isAutoFilled = state.settings.autoFillWorkday && !entries.length && dayType === "workday" && day.date <= today;
+    const isSelected = day.date === ui.selectedDate;
+    const isToday = day.date === today;
+    const dateObj = new Date(`${day.date}T00:00:00`);
+    const weekday = weekLabelByIndex(dateObj.getDay());
+    const dayNum = Number(day.date.slice(8, 10));
+    const typeClass = dayType === "holiday" ? "is-holiday" : (dayType === "restday" ? "is-restday" : "");
+    const hasData = hours > 0 || isAutoFilled;
+    return `
+      <button class="calendar-list-item ${isSelected ? "is-selected" : ""} ${isToday ? "is-today" : ""} ${typeClass} ${hasData ? "has-data" : ""}" type="button" data-date="${day.date}">
+        <div class="list-date">
+          <strong>${dayNum}</strong>
+          <span>周${weekday}</span>
+        </div>
+        <div class="list-info">
+          ${holiday ? `<b class="list-tag holiday-tag">${escapeHtml(holiday.name)}</b>` : ""}
+          ${holiday?.adjusted ? `<b class="list-tag adjust-tag">调休上班</b>` : ""}
+          ${marker && !holiday ? `<b class="list-tag">${escapeHtml(marker)}</b>` : ""}
+          ${entries.length ? `<span class="list-entries">${entries.length} 条记录</span>` : ""}
+          ${isAutoFilled ? `<b class="list-tag auto-tag">默认 ${state.settings.normalHoursPerDay}h</b>` : ""}
+        </div>
+        <div class="list-numbers">
+          <strong>${hours ? `${hours}h` : (isAutoFilled ? `${state.settings.normalHoursPerDay}h` : "—")}</strong>
+          <span>${pay ? money(pay) : ""}</span>
+        </div>
+      </button>
+    `;
+  }).join("");
+  return `
+    <section class="calendar-panel calendar-list-panel" aria-label="日历列表">
+      <div class="calendar-list">${items}</div>
+    </section>
+  `;
+}
+
 function renderDayStatus(entries) {
   const inferredDayType = inferDayType(ui.selectedDate, state.settings);
   const holiday = getHolidayInfo(ui.selectedDate);
@@ -723,7 +822,7 @@ function renderDayStatus(entries) {
     : (inferredDayType === "workday" ? "默认有班，确认班次后保存" : `${holiday ? holiday.name : DAY_TYPE_LABELS[inferredDayType]}，按实际情况记录`);
   const ruleText = entries.length ? payRuleTextForEntries(entries) : payRuleTextForDayType(inferredDayType);
   const dayMeta = holiday
-    ? `${holiday.marker}${holiday.adjusted ? " · 调休上班" : ""}`
+    ? holiday.name || holiday.marker
     : (inferredDayType === "restday" ? "休息日" : "默认工作日");
   return `
     <div class="day-status">
@@ -772,8 +871,16 @@ function renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)
     const adjustments = adjustmentsByDate.get(day.date) || [];
     html += renderDayCell(day, entries, adjustments);
     const normalized = entries.map((e) => normalizeEntry(e, state.settings));
-    weekHours += normalized.reduce((sum, e) => sum + e.totalHours, 0);
-    weekPay += entries.reduce((sum, e) => sum + calculateEntryPay(e, state.settings).totalPay, 0);
+    const entryHours = normalized.reduce((sum, e) => sum + e.totalHours, 0);
+    const entryPay = entries.reduce((sum, e) => sum + calculateEntryPay(e, state.settings).totalPay, 0);
+    if (entries.length > 0) {
+      weekHours += entryHours;
+      weekPay += entryPay;
+    } else if (state.settings.autoFillWorkday && inferDayType(day.date, state.settings) === "workday" && day.date <= today) {
+      weekHours += state.settings.normalHoursPerDay;
+      const autoEntry = { date: day.date, recordMode: RECORD_MODES.HOURS, dayType: "workday", regularHours: state.settings.normalHoursPerDay, overtimeHours: 0, totalHours: state.settings.normalHoursPerDay };
+      weekPay += calculateEntryPay(autoEntry, state.settings).totalPay;
+    }
   }
   if (days.length > 0) {
     html += `<div class="week-summary-row"><span>周合计</span><strong>${round2(weekHours)}h</strong><span>${money(weekPay)}</span></div>`;
@@ -790,6 +897,7 @@ function renderDayCell(day, entries, adjustments) {
   const holiday = day.holiday || getHolidayInfo(day.date);
   const marker = holiday?.marker || (dayType === "restday" ? "休" : "");
   const note = holiday?.name || (dayType === "restday" ? "周末" : "");
+  const isAutoFilled = state.settings.autoFillWorkday && !entries.length && dayType === "workday" && day.date <= today;
   const classes = [
     "day-cell",
     day.inMonth ? "" : "is-muted",
@@ -799,22 +907,24 @@ function renderDayCell(day, entries, adjustments) {
     hasAdjustment ? "has-adjustment" : "",
     dayType === "holiday" ? "is-holiday" : "",
     dayType === "restday" ? "is-restday" : "",
-    holiday?.adjusted ? "is-adjusted" : ""
+    holiday?.adjusted ? "is-adjusted" : "",
+    isAutoFilled ? "is-auto-filled" : ""
   ].filter(Boolean).join(" ");
   const ariaParts = [
     selectedDateLabel(day.date),
     holiday?.name || DAY_TYPE_LABELS[dayType],
     holiday?.adjusted ? "调休上班" : "",
     marker ? `标记 ${marker}` : "",
-    hours ? `工时 ${hours} 小时` : "未记录工时",
+    hours ? `工时 ${hours} 小时` : (isAutoFilled ? `默认 ${state.settings.normalHoursPerDay} 小时` : "未记录工时"),
     pay ? `工资 ${money(pay)}` : ""
   ].filter(Boolean).join("，");
   return `
     <button class="${classes}" type="button" data-date="${day.date}" aria-label="${escapeAttr(ariaParts)}" title="${escapeAttr(ariaParts)}">
       <span class="day-number">${Number(day.date.slice(8, 10))}</span>
       ${marker ? `<span class="day-marker">${escapeHtml(marker)}</span>` : ""}
+      ${isAutoFilled ? `<span class="day-marker auto-fill-marker">默认</span>` : ""}
       ${note ? `<span class="day-note">${escapeHtml(note)}</span>` : ""}
-      <span class="day-hours">${hours ? `${hours}h` : ""}</span>
+      <span class="day-hours">${hours ? `${hours}h` : (isAutoFilled ? `${state.settings.normalHoursPerDay}h` : "")}</span>
       <span class="day-pay">${pay ? money(pay) : ""}</span>
     </button>
   `;
@@ -1227,8 +1337,6 @@ function renderBulkPreview() {
   });
   const deletePreview = previewBulkDelete({ start, end, deleteKind: "bulk" });
   const bulkMode = ui.bulkMode || "add";
-  const isOvertimeAdd = currentKind === "overtime";
-  const isPresetAdd = currentKind === "preset";
   return `
     <form id="bulk-form" class="bulk-tool" data-bulk-mode="${escapeAttr(bulkMode)}">
       <div class="bulk-mode-switch" aria-label="批量操作类型">
@@ -1267,30 +1375,30 @@ function renderBulkPreview() {
               ${availableAddKinds.map((item) => option(item.value, item.label, currentKind)).join("")}
             </select>
           `)}
-          ${currentKind === "monthlyBase" ? "" : field("添加规则", `
+          ${field("添加规则", `
             <select name="rule">
               <option value="workdays">仅工作日和调休上班</option>
               <option value="all">每天都添加</option>
               <option value="rest">只添加休息日/节假日</option>
             </select>
           `)}
-          ${isOvertimeAdd ? field("每天加班", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="2" inputmode="decimal">`) : ""}
-          ${isPresetAdd ? field("班次", `
+          ${field("每天加班", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="2" inputmode="decimal">`)}
+          ${field("班次", `
             <select name="presetId">
               ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
             </select>
-          `) : ""}
+          `)}
         </div>
         <label class="check-row slim">
           <input type="checkbox" name="overwrite" value="true">
-          <span>${currentKind === "monthlyBase" ? "替换已有基础工时，不影响加班" : (currentKind === "overtime" ? "替换同来源批量加班" : "覆盖已有工时记录")}</span>
+          <span>覆盖已有同类记录</span>
         </label>
       `}
       <div class="form-footer">
         <span></span>
         ${bulkMode === "delete"
-          ? `<button class="danger-button" type="submit" name="bulkAction" value="delete">删除预览中的记录</button>`
-          : `<button class="primary-button" type="submit" name="bulkAction" value="add">添加预览中的日期</button>`}
+          ? `<button class="danger-button" type="button" data-action="bulk-delete">删除预览中的记录</button>`
+          : `<button class="primary-button" type="button" data-action="bulk-add">添加预览中的日期</button>`}
       </div>
     </form>
   `;
@@ -1505,11 +1613,7 @@ function renderAppFooter() {
           <strong>${APP_VERSION}</strong>
           <em>当前版本</em>
         </span>
-        <span class="footer-stat">
-          <strong>${RELEASE_COUNT}</strong>
-          <em>次更新</em>
-        </span>
-        <span class="footer-stat-action">日志</span>
+        <span class="footer-stat-action">查看日志</span>
       </a>
       <div class="sidebar-footer-bottom">
         <span>© ${year} yuan 版权所有</span>
@@ -1546,6 +1650,262 @@ function renderSettingsView() {
   const settings = state.settings;
   const insights = deriveSalaryInsights(settings);
   const modeFields = settingsFieldsForMode(settings.salaryMode);
+  const isMobile = isMobileViewport();
+  const sheetGroup = ui.settingsSheetOpen;
+  const settingsGroups = [
+    { id: "salary", title: "薪资方式与时薪", summary: MODE_LABELS[settings.salaryMode], open: true },
+    { id: "overtime", title: "加班倍率", summary: `工作日 ${settings.overtimeMultiplier}x / 休息日 ${settings.restDayMultiplier}x / 节假日 ${settings.holidayMultiplier}x`, open: true },
+    { id: "goals", title: "目标", summary: `月收入 ${money(settings.goals.monthlyIncome)} / 月工时 ${settings.goals.monthlyHours}h`, open: false },
+    { id: "shifts", title: "班次管理", summary: `${settings.shiftPresets.length} 个班次模板`, open: false },
+    { id: "workdays", title: "工作日与假期", summary: `${restCycleLabel(settings.restCycle.mode)} · 周${weekLabelByIndex(settings.weekStart)}开周`, open: false },
+    { id: "adjustment", title: "自动补扣", summary: settings.autoAdjustment.enabled ? `已开启 ${money(settings.autoAdjustment.amount)}/天` : "未开启", open: false },
+    { id: "tax", title: "个税设置", summary: "累计预扣法", open: false },
+    { id: "display", title: "显示", summary: themeModeLabel(settings.themeMode), open: false },
+    { id: "data", title: "数据管理", summary: state.cloud?.lastSyncAt ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}` : "本地备份与云同步", open: false },
+    { id: "about", title: "关于", summary: `明薪工时 ${APP_VERSION}`, open: false }
+  ];
+
+  const salaryBody = `
+    <div class="settings-group-body">
+      ${field("薪资方式", `
+        <select name="salaryMode">
+          ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
+          ${option(SALARY_MODES.BASE_OVERTIME, MODE_LABELS[SALARY_MODES.BASE_OVERTIME], settings.salaryMode)}
+          ${option(SALARY_MODES.COMPREHENSIVE, MODE_LABELS[SALARY_MODES.COMPREHENSIVE], settings.salaryMode)}
+          ${option(SALARY_MODES.HOURLY, MODE_LABELS[SALARY_MODES.HOURLY], settings.salaryMode)}
+        </select>
+      `)}
+      <label class="check-row">
+        <input type="checkbox" name="autoFillWorkday" value="true" ${settings.autoFillWorkday ? "checked" : ""}>
+        <span>无记录的工作日自动算 ${settings.normalHoursPerDay}h 正班（勾选后不需要每天手动登记）</span>
+      </label>
+      <div class="form-grid">
+        ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
+        ${modeFields.includes("baseSalary") ? moneyField("底薪", "baseSalary", settings.baseSalary) : ""}
+        ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+        ${modeFields.includes("regularHourlyRate") ? moneyField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate) : ""}
+        ${modeFields.includes("hourlyRate") ? moneyField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate) : ""}
+        ${modeFields.includes("baseOvertimeRate") ? moneyField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate) : ""}
+        ${modeFields.includes("comprehensiveHourlyRate") ? moneyField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate) : ""}
+        ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
+      </div>
+    </div>`;
+
+  const overtimeBody = `
+    <div class="settings-group-body">
+      <div class="form-grid">
+        ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
+        ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
+        ${numberField("节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
+        ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
+      </div>
+    </div>`;
+
+  const goalsBody = `
+    <div class="settings-group-body">
+      <div class="form-grid">
+        ${moneyField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome)}
+        ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
+      </div>
+    </div>`;
+
+  const currentWorkType = detectWorkType(settings.shiftPresets);
+  const shiftsBody = `
+    <div class="settings-group-body">
+      ${field("上班方式", `
+        <select name="workType">
+          <option value="day" ${currentWorkType === "day" ? "selected" : ""}>固定白班</option>
+          <option value="night" ${currentWorkType === "night" ? "selected" : ""}>固定夜班</option>
+          <option value="rotating" ${currentWorkType === "rotating" ? "selected" : ""}>轮班（白班+夜班）</option>
+          <option value="custom" ${currentWorkType === "custom" ? "selected" : ""}>自定义班次</option>
+        </select>
+      `)}
+      ${field("默认班次", `
+        <select name="defaultPresetId">
+          ${settings.shiftPresets.filter((p) => p.dayType !== "restday").map((preset) => option(preset.id, preset.name, settings.defaultPresetId)).join("")}
+        </select>
+      `)}
+      <div class="preset-editor">
+        ${settings.shiftPresets.map((preset, index) => `<div class="${preset.id === "rest" ? "preset-hidden" : ""}">${renderPresetEditor(preset, index)}</div>`).join("")}
+      </div>
+      <small class="helper">选择上班方式会自动配置常用班次；默认班次决定工作日自动使用哪个模板。</small>
+    </div>`;
+
+  const workdaysBody = `
+    <div class="settings-group-body">
+      <div class="form-grid">
+        ${field("每周从哪天开始", `
+          <select name="weekStart">
+            ${weekdayOrder(1).map((day) => option(String(day), `周${weekLabelByIndex(day)}`, String(settings.weekStart))).join("")}
+          </select>
+        `)}
+        ${field("休假方式", `
+          <select name="restCycle.mode">
+            ${option(REST_CYCLE_MODES.DOUBLE_WEEKEND, "每周双休（周六周日）", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.SINGLE_SUNDAY, "每周单休（周日）", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.WORKWEEK, "自定义每周休息日", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.WORK_6_REST_1, "上六休一", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.WORK_14_REST_1, "上十四休一", settings.restCycle.mode)}
+            ${option(REST_CYCLE_MODES.CUSTOM, "自定义连续周期", settings.restCycle.mode)}
+          </select>
+        `)}
+      </div>
+      <small class="helper">每周双休/单休会自动套用常见休息日；轮班制可用上六休一、上十四休一，并通过休息记录自动推算下一次休假。</small>
+      <div class="workweek-grid custom-workweek-grid">
+        ${weekdayOrder(settings.weekStart).map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), `周${weekLabelByIndex(weekday)}上班`, settings.workweek.includes(weekday))).join("")}
+      </div>
+      ${renderHolidayRuleCard()}
+      <h3>放假提醒</h3>
+      ${renderRestCycleSettings(settings)}
+    </div>`;
+
+  const adjustmentBody = `
+    <div class="settings-group-body">
+      <label class="check-row">
+        <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
+        <span>保存工时时自动添加日补扣</span>
+      </label>
+      <div class="form-grid">
+        ${moneyField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount)}
+        ${field("补扣类型", `<select name="autoAdjustment.type">${option("allowance", "补贴", settings.autoAdjustment.type)}${option("deduction", "扣款", settings.autoAdjustment.type)}</select>`)}
+        ${field("补扣分类", `<input name="autoAdjustment.category" type="text" maxlength="30" value="${escapeAttr(settings.autoAdjustment.category)}">`)}
+        ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
+      </div>
+    </div>`;
+
+  const taxBody = `
+    <div class="settings-group-body">
+      <div class="tax-note">
+        <strong>累计预扣法</strong>
+        <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
+      </div>
+      <div class="form-grid">
+        ${moneyField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly)}
+        ${moneyField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly)}
+        ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
+        ${moneyFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, "tax-other-fixed")}
+        ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
+        ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
+        ${moneyFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, "tax-social-fixed")}
+        ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
+      </div>
+    </div>`;
+
+  const displayBody = `
+    <div class="settings-group-body">
+      ${field("明暗模式", `
+        <select name="themeMode">
+          ${option("system", "跟随系统", settings.themeMode)}
+          ${option("light", "浅色", settings.themeMode)}
+          ${option("dark", "深色", settings.themeMode)}
+        </select>
+      `)}
+    </div>`;
+
+  const dataBody = `
+    <div class="settings-group-body">
+      ${renderCloudSyncPanel()}
+      <div class="form-footer">
+        <label class="file-button">
+          导入
+          <input id="import-file" type="file" accept="application/json,.json">
+        </label>
+        <div class="button-row">
+          <button class="plain-button" type="button" data-action="backup">备份</button>
+          <button class="primary-button" type="submit">保存设置</button>
+        </div>
+      </div>
+    </div>`;
+
+  const aboutBody = `
+    <div class="settings-group-body about-section">
+      <div class="about-logo">
+        <img src="./assets/icon.svg" alt="" width="48" height="48">
+        <div>
+          <strong>明薪工时</strong>
+          <span>${APP_VERSION}</span>
+        </div>
+      </div>
+      <p class="about-desc">离线优先的工时记录 PWA，支持跨平台使用。</p>
+      <div class="about-links">
+        <a class="about-link" href="./changelog.html">
+          <span>更新日志</span>
+          <span class="settings-menu-arrow">›</span>
+        </a>
+        <a class="about-link" href="https://github.com/yuan-666/WorkTimeAPP" target="_blank" rel="noopener">
+          <span>GitHub 仓库</span>
+          <span class="settings-menu-arrow">›</span>
+        </a>
+        <a class="about-link" href="https://yuan6.cn" target="_blank" rel="noopener">
+          <span>作者博客</span>
+          <span class="settings-menu-arrow">›</span>
+        </a>
+      </div>
+      <p class="about-copyright">© ${new Date().getFullYear()} yuan 版权所有</p>
+    </div>`;
+
+  const groupBodies = { salary: salaryBody, overtime: overtimeBody, goals: goalsBody, shifts: shiftsBody, workdays: workdaysBody, adjustment: adjustmentBody, tax: taxBody, display: displayBody, data: dataBody, about: aboutBody };
+
+  if (isMobile) {
+    const activeGroup = settingsGroups.find((g) => g.id === sheetGroup);
+    if (activeGroup) {
+      return `
+        <div class="workspace settings-layout">
+          <section class="detail-panel settings-detail-page">
+            <div class="settings-detail-header">
+              <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <h2>${escapeHtml(activeGroup.title)}</h2>
+              <span></span>
+            </div>
+            <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
+              ${groupBodies[activeGroup.id]}
+              <div class="settings-detail-save">
+                <button class="primary-button" type="submit">保存</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      `;
+    }
+    return `
+      <div class="workspace settings-layout">
+        <section class="detail-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">规则</p>
+              <h2>薪资设置</h2>
+            </div>
+          </div>
+          <form id="settings-form" class="tool-form" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
+            <div class="insight-panel">
+              <div>
+                <span>自动推算</span>
+                <strong>正班 ${money(insights.regularHourlyRate)} / 小时 ${money(insights.rates.hourlyRate)}</strong>
+              </div>
+              <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪。`}</p>
+            </div>
+            <div class="settings-mobile-menu">
+              ${settingsGroups.map((group) => `
+                <button class="settings-menu-item" type="button" data-action="open-settings-sheet" data-group="${group.id}">
+                  <div>
+                    <strong>${escapeHtml(group.title)}</strong>
+                    <span>${escapeHtml(group.summary)}</span>
+                  </div>
+                  <span class="settings-menu-arrow">›</span>
+                </button>
+              `).join("")}
+            </div>
+            <div class="settings-mobile-save">
+              <button class="primary-button" type="submit">保存全部设置</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `;
+  }
+
   return `
     <div class="workspace settings-layout">
       <section class="detail-panel">
@@ -1563,189 +1923,15 @@ function renderSettingsView() {
             </div>
             <p>${insights.missingConfig.length ? `还需要填写：${insights.missingConfig.map((key) => MISSING_LABELS[key] || key).join("、")}` : `可用底薪和月计薪小时自动反推时薪，也可以手动填写。`}</p>
           </div>
-
-          <details class="settings-group" open>
-            <summary class="settings-group-title">
-              <span>薪资方式与时薪</span>
-              <small>${MODE_LABELS[settings.salaryMode]}</small>
-            </summary>
-            <div class="settings-group-body">
-              ${field("薪资方式", `
-                <select name="salaryMode">
-                  ${option(SALARY_MODES.REGULAR_OVERTIME, MODE_LABELS[SALARY_MODES.REGULAR_OVERTIME], settings.salaryMode)}
-                  ${option(SALARY_MODES.BASE_OVERTIME, MODE_LABELS[SALARY_MODES.BASE_OVERTIME], settings.salaryMode)}
-                  ${option(SALARY_MODES.COMPREHENSIVE, MODE_LABELS[SALARY_MODES.COMPREHENSIVE], settings.salaryMode)}
-                  ${option(SALARY_MODES.HOURLY, MODE_LABELS[SALARY_MODES.HOURLY], settings.salaryMode)}
-                </select>
-              `)}
-              <div class="form-grid">
-                ${modeFields.includes("normalHoursPerDay") ? numberField("每日正班小时", "normalHoursPerDay", settings.normalHoursPerDay, 0.25, { max: WORK_LIMITS.maxRegularHours }) : ""}
-                ${modeFields.includes("baseSalary") ? moneyField("底薪", "baseSalary", settings.baseSalary) : ""}
-                ${modeFields.includes("standardMonthlyHours") ? numberField("月计薪小时", "standardMonthlyHours", settings.standardMonthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-                ${modeFields.includes("regularHourlyRate") ? moneyField("正班时薪（可留空自动算）", "regularHourlyRate", settings.regularHourlyRate) : ""}
-                ${modeFields.includes("hourlyRate") ? moneyField("小时工正班时薪（可留空自动算）", "hourlyRate", settings.hourlyRate) : ""}
-                ${modeFields.includes("baseOvertimeRate") ? moneyField("底薪加班时薪（可留空）", "baseOvertimeRate", settings.baseOvertimeRate) : ""}
-                ${modeFields.includes("comprehensiveHourlyRate") ? moneyField("综合工时时薪", "comprehensiveHourlyRate", settings.comprehensiveHourlyRate) : ""}
-                ${modeFields.includes("comprehensiveTargetHours") ? numberField("综合目标小时", "comprehensiveTargetHours", settings.comprehensiveTargetHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours }) : ""}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group" open>
-            <summary class="settings-group-title">
-              <span>加班倍率</span>
-              <small>工作日 ${settings.overtimeMultiplier}x / 休息日 ${settings.restDayMultiplier}x / 节假日 ${settings.holidayMultiplier}x</small>
-            </summary>
-            <div class="settings-group-body">
-              <div class="form-grid">
-                ${numberField("工作日加班倍率", "overtimeMultiplier", settings.overtimeMultiplier, 0.05, { max: 5 })}
-                ${numberField("休息日倍率", "restDayMultiplier", settings.restDayMultiplier, 0.05, { max: 5 })}
-                ${numberField("节假日倍率", "holidayMultiplier", settings.holidayMultiplier, 0.05, { max: 5 })}
-                ${numberField("综合超时倍率", "comprehensiveOvertimeMultiplier", settings.comprehensiveOvertimeMultiplier, 0.05, { max: 5 })}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>目标</span>
-              <small>月收入 ${money(settings.goals.monthlyIncome)} / 月工时 ${settings.goals.monthlyHours}h</small>
-            </summary>
-            <div class="settings-group-body">
-              <div class="form-grid">
-                ${moneyField("月收入目标", "goals.monthlyIncome", settings.goals.monthlyIncome)}
-                ${numberField("月工时目标", "goals.monthlyHours", settings.goals.monthlyHours, 0.25, { max: WORK_LIMITS.maxMonthlyHours })}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>班次管理</span>
-              <small>${settings.shiftPresets.length} 个班次模板</small>
-            </summary>
-            <div class="settings-group-body">
-              ${field("默认班次", `
-                <select name="defaultPresetId">
-                  ${settings.shiftPresets.map((preset) => option(preset.id, preset.name, settings.defaultPresetId)).join("")}
-                </select>
-              `)}
-              <div class="preset-editor">
-                ${settings.shiftPresets.map((preset, index) => renderPresetEditor(preset, index)).join("")}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>工作日与假期</span>
-              <small>${restCycleLabel(settings.restCycle.mode)} · 周${weekLabelByIndex(settings.weekStart)}开周</small>
-            </summary>
-            <div class="settings-group-body">
-              <div class="form-grid">
-                ${field("每周从哪天开始", `
-                  <select name="weekStart">
-                    ${weekdayOrder(1).map((day) => option(String(day), `周${weekLabelByIndex(day)}`, String(settings.weekStart))).join("")}
-                  </select>
-                `)}
-                ${field("休假方式", `
-                  <select name="restCycle.mode">
-                    ${option(REST_CYCLE_MODES.DOUBLE_WEEKEND, "每周双休（周六周日）", settings.restCycle.mode)}
-                    ${option(REST_CYCLE_MODES.SINGLE_SUNDAY, "每周单休（周日）", settings.restCycle.mode)}
-                    ${option(REST_CYCLE_MODES.WORKWEEK, "自定义每周休息日", settings.restCycle.mode)}
-                    ${option(REST_CYCLE_MODES.WORK_6_REST_1, "上六休一", settings.restCycle.mode)}
-                    ${option(REST_CYCLE_MODES.WORK_14_REST_1, "上十四休一", settings.restCycle.mode)}
-                    ${option(REST_CYCLE_MODES.CUSTOM, "自定义连续周期", settings.restCycle.mode)}
-                  </select>
-                `)}
-              </div>
-              <small class="helper">每周双休/单休会自动套用常见休息日；轮班制可用上六休一、上十四休一，并通过休息记录自动推算下一次休假。</small>
-              <div class="workweek-grid custom-workweek-grid">
-                ${weekdayOrder(settings.weekStart).map((weekday) => checkbox(`workweek.${weekday}`, String(weekday), `周${weekLabelByIndex(weekday)}上班`, settings.workweek.includes(weekday))).join("")}
-              </div>
-              ${renderHolidayRuleCard()}
-              <h3>放假提醒</h3>
-              ${renderRestCycleSettings(settings)}
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>自动补扣</span>
-              <small>${settings.autoAdjustment.enabled ? `已开启 ${money(settings.autoAdjustment.amount)}/天` : "未开启"}</small>
-            </summary>
-            <div class="settings-group-body">
-              <label class="check-row">
-                <input type="checkbox" name="autoAdjustment.enabled" value="true" ${settings.autoAdjustment.enabled ? "checked" : ""}>
-                <span>保存工时时自动添加日补扣</span>
-              </label>
-              <div class="form-grid">
-                ${moneyField("日补扣金额", "autoAdjustment.amount", settings.autoAdjustment.amount)}
-                ${field("补扣类型", `<select name="autoAdjustment.type">${option("allowance", "补贴", settings.autoAdjustment.type)}${option("deduction", "扣款", settings.autoAdjustment.type)}</select>`)}
-                ${field("补扣分类", `<input name="autoAdjustment.category" type="text" maxlength="30" value="${escapeAttr(settings.autoAdjustment.category)}">`)}
-                ${field("补扣备注", `<input name="autoAdjustment.note" type="text" maxlength="60" value="${escapeAttr(settings.autoAdjustment.note)}">`)}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>个税设置</span>
-              <small>累计预扣法</small>
-            </summary>
-            <div class="settings-group-body">
-              <div class="tax-note">
-                <strong>累计预扣法</strong>
-                <span>应纳税所得额 = 累计收入 - 累计减除费用 - 累计专项扣除 - 累计专项附加扣除 - 依法确定的其他扣除。</span>
-              </div>
-              <div class="form-grid">
-                ${moneyField("月减除费用", "tax.standardDeductionMonthly", settings.tax.standardDeductionMonthly)}
-                ${moneyField("专项附加扣除", "tax.specialAdditionalDeductionMonthly", settings.tax.specialAdditionalDeductionMonthly)}
-                ${field("其他扣除", `<select name="tax.otherDeductionMode">${option("fixed", "按金额", settings.tax.otherDeductionMode)}${option("percent", "按比例", settings.tax.otherDeductionMode)}</select>`)}
-                ${moneyFieldWithClass("其他扣除金额", "tax.fixedDeductionMonthly", settings.tax.fixedDeductionMonthly, "tax-other-fixed")}
-                ${numberFieldWithClass("其他扣除比例%", "tax.deductionPercent", settings.tax.deductionPercent, 0.01, { max: 100 }, "tax-other-percent")}
-                ${field("社保公积金", `<select name="tax.socialSecurityMode">${option("fixed", "按金额", settings.tax.socialSecurityMode)}${option("percent", "按比例", settings.tax.socialSecurityMode)}</select>`)}
-                ${moneyFieldWithClass("社保公积金金额", "tax.socialSecurityFixedMonthly", settings.tax.socialSecurityFixedMonthly, "tax-social-fixed")}
-                ${numberFieldWithClass("社保公积金比例%", "tax.socialSecurityPercent", settings.tax.socialSecurityPercent, 0.01, { max: 100 }, "tax-social-percent")}
-              </div>
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>显示</span>
-              <small>${themeModeLabel(settings.themeMode)}</small>
-            </summary>
-            <div class="settings-group-body">
-              ${field("明暗模式", `
-                <select name="themeMode">
-                  ${option("system", "跟随系统", settings.themeMode)}
-                  ${option("light", "浅色", settings.themeMode)}
-                  ${option("dark", "深色", settings.themeMode)}
-                </select>
-              `)}
-            </div>
-          </details>
-
-          <details class="settings-group">
-            <summary class="settings-group-title">
-              <span>数据管理</span>
-              <small>${state.cloud?.lastSyncAt ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}` : "本地备份与云同步"}</small>
-            </summary>
-            <div class="settings-group-body">
-              ${renderCloudSyncPanel()}
-              <div class="form-footer">
-                <label class="file-button">
-                  导入
-                  <input id="import-file" type="file" accept="application/json,.json">
-                </label>
-                <div class="button-row">
-                  <button class="plain-button" type="button" data-action="backup">备份</button>
-                  <button class="primary-button" type="submit">保存设置</button>
-                </div>
-              </div>
-            </div>
-          </details>
+          ${settingsGroups.map((group) => `
+            <details class="settings-group" ${group.open ? "open" : ""}>
+              <summary class="settings-group-title">
+                <span>${escapeHtml(group.title)}</span>
+                <small>${escapeHtml(group.summary)}</small>
+              </summary>
+              ${groupBodies[group.id]}
+            </details>
+          `).join("")}
         </form>
       </section>
     </div>
@@ -1968,6 +2154,7 @@ function saveSettings(form) {
   next.workweek = [];
   next.shiftPresets = [];
   next.autoAdjustment.enabled = false;
+  next.autoFillWorkday = false;
   for (const [key, value] of Object.entries(data)) {
     if (key.startsWith("cloud.")) {
       const fieldName = key.split(".")[1];
@@ -1986,6 +2173,10 @@ function saveSettings(form) {
     }
     if (key === "autoAdjustment.enabled") {
       next.autoAdjustment.enabled = true;
+      continue;
+    }
+    if (key === "autoFillWorkday") {
+      next.autoFillWorkday = true;
       continue;
     }
     setDeep(next, key, value === "" ? 0 : Number.isNaN(Number(value)) ? value : Number(value));
@@ -2068,7 +2259,7 @@ async function handleCloudAction(action) {
     payload.passwordCipher = encryptedPassword.ciphertext;
     payload.passwordKeyId = encryptedPassword.keyId;
     const result = await postCloud(payload);
-    if (!result.ok) throw new Error(result.error || "云同步失败");
+    if (!result.ok) throw new Error(cloudErrorMessage(actionName, result.error, result.status));
     state.cloud = normalizeCloudConfig({
       ...state.cloud,
       userId: auth.userId,
@@ -2083,9 +2274,24 @@ async function handleCloudAction(action) {
       persist(cloudActionNotice(actionName));
     }
   } catch (error) {
-    persist(error.message || "云同步失败，请稍后再试");
+    persist(cloudErrorMessage(actionName, error.message));
   }
   render();
+}
+
+function cloudErrorMessage(action, message, status) {
+  if (!message) return "云同步失败，请检查网络后重试";
+  if (message.includes("已存在")) return "该账号已存在，请直接登录";
+  if (message.includes("账号或密码不正确")) return "账号或密码不正确，请检查后重试";
+  if (message.includes("已停用")) return "账号已停用，暂时无法使用云备份";
+  if (message.includes("已有更新")) return "云端已有新数据，请先恢复或重新登录后再备份";
+  if (message.includes("安全密钥")) return "云备份安全配置异常，请联系管理员";
+  if (message.includes("超过")) return "数据量过大，请先导出本地备份或清理历史记录";
+  if (status === 401) return action === "register" ? "注册失败，请更换账号名" : "登录失败，请检查账号和密码";
+  if (status === 409) return action === "register" ? "该账号已存在，请直接登录" : "数据冲突，请先恢复再备份";
+  if (status === 403) return "账号已被停用，暂时无法操作";
+  if (status >= 500) return "服务器暂时不可用，请稍后再试";
+  return message;
 }
 
 function cloudConfigFromForm() {
@@ -2145,7 +2351,7 @@ async function postCloud(payload) {
     body: JSON.stringify(payload)
   });
   const result = await response.json().catch(() => ({}));
-  return response.ok ? { ok: true, ...result } : { ok: false, ...result };
+  return response.ok ? { ok: true, ...result } : { ok: false, status: response.status, ...result };
 }
 
 function createCloudSnapshot() {
@@ -2505,14 +2711,6 @@ function addAutoAdjustment(date, notice = "") {
   if (notice) persist(notice);
 }
 
-function bulkApply(form, action) {
-  if (action === "delete") {
-    bulkDelete(form);
-    return;
-  }
-  bulkAdd(form);
-}
-
 function bulkAdd(form) {
   const config = bulkConfigFromForm(form);
   if (config.addKind === "overtime" && (!Number.isFinite(config.overtimeHours) || config.overtimeHours <= 0)) {
@@ -2538,6 +2736,7 @@ function bulkAdd(form) {
   }
 
   let count = 0;
+  let failed = 0;
   const addedIds = [];
   for (const date of preview.dates) {
     const entry = buildBulkEntry(date, config, preset);
@@ -2549,7 +2748,10 @@ function bulkAdd(form) {
       updatedAt: new Date().toISOString()
     };
     const validation = validateEntry(entryToSave, state.settings, state.entries);
-    if (!validation.valid) continue;
+    if (!validation.valid) {
+      failed += 1;
+      continue;
+    }
     const savedEntry = {
       ...entryToSave,
       regularHours: validation.normalized.regularHours,
@@ -2566,7 +2768,10 @@ function bulkAdd(form) {
   if (removed.length || (config.overwrite && addedIds.length)) {
     ui.lastDeleted = { type: "batch-replace", payload: { entries: removed, adjustments: [], addedIds } };
   }
-  persist(count ? `已批量添加 ${count} 条记录${removed.length ? "，可撤销覆盖" : ""}` : "没有可添加的日期");
+  let message = count ? `已批量添加 ${count} 条记录` : "没有可添加的日期";
+  if (failed > 0) message += `，${failed} 条因数据校验跳过`;
+  if (removed.length) message += "，可撤销覆盖";
+  persist(message);
   render();
 }
 
@@ -2614,11 +2819,13 @@ function updateBulkPreview() {
 
 function bulkConfigFromForm(form) {
   const data = Object.fromEntries(new FormData(form));
+  const availableKinds = bulkAddKindOptions().map((item) => item.value);
+  const addKind = availableKinds.includes(data.addKind) ? data.addKind : defaultBulkAddKind();
   return {
-    start: data.start,
-    end: data.end,
-    addKind: data.addKind || ui.bulkAddKind || defaultBulkAddKind(),
-    rule: data.rule || "workdays",
+    start: data.start || `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}-01`,
+    end: data.end || formatDate(new Date(ui.year, ui.monthIndex + 1, 0)),
+    addKind,
+    rule: data.rule || (addKind === "monthlyBase" ? "workdays" : "workdays"),
     presetId: data.presetId || state.settings.defaultPresetId,
     overtimeHours: Number(data.overtimeHours || 0),
     overwrite: data.overwrite === "true",
@@ -2900,6 +3107,40 @@ function presetsHaveSameTime(presets = []) {
   });
 }
 
+function defaultPresetsForWorkType(workType) {
+  const rest = { id: "rest", name: "休息日加班", recordMode: RECORD_MODES.HOURS, dayType: "restday", regularHours: 0, overtimeHours: 8, totalHours: 8 };
+  if (workType === "night") {
+    return [
+      { id: "night", name: "夜班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "22:00", endTime: "06:00", breakMinutes: 30 },
+      { id: "night-ot", name: "夜班加班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "22:00", endTime: "10:00", breakMinutes: 30 },
+      rest
+    ];
+  }
+  if (workType === "rotating") {
+    return [
+      { id: "day", name: "白班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "09:00", endTime: "18:00", breakMinutes: 60 },
+      { id: "overtime", name: "白班加班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "09:00", endTime: "20:00", breakMinutes: 60 },
+      { id: "night", name: "夜班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "22:00", endTime: "06:00", breakMinutes: 30 },
+      rest
+    ];
+  }
+  return [
+    { id: "day", name: "白班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "09:00", endTime: "18:00", breakMinutes: 60 },
+    { id: "overtime", name: "白班加班", recordMode: RECORD_MODES.TIME, dayType: "workday", startTime: "09:00", endTime: "20:00", breakMinutes: 60 },
+    rest
+  ];
+}
+
+function detectWorkType(presets) {
+  const ids = presets.map((p) => p.id);
+  const has = (id) => ids.includes(id);
+  if (has("day") && has("night") && has("overtime")) return "rotating";
+  if (has("day") && has("overtime") && !has("night")) return "day";
+  if (has("night") && has("night-ot") && !has("day")) return "night";
+  if (has("night") && !has("day")) return "night";
+  return "custom";
+}
+
 function limitSettings(settings) {
   const next = mergeSettings(settings);
   next.themeMode = ["system", "light", "dark"].includes(next.themeMode) ? next.themeMode : "system";
@@ -2922,6 +3163,7 @@ function limitSettings(settings) {
   next.restCycle.mode = Object.values(REST_CYCLE_MODES).includes(next.restCycle.mode) ? next.restCycle.mode : REST_CYCLE_MODES.WORKWEEK;
   next.restCycle.workDays = boundedNumber(next.restCycle.workDays, 1, 31);
   next.restCycle.restDays = boundedNumber(next.restCycle.restDays, 1, 14);
+  next.autoFillWorkday = Boolean(next.autoFillWorkday);
   return next;
 }
 
@@ -3102,6 +3344,12 @@ function themeModeLabel(mode) {
     light: "浅色",
     dark: "深色"
   })[mode] || "跟随系统";
+}
+
+function themeIcon(mode) {
+  if (mode === "dark") return `<svg class="theme-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+  if (mode === "light") return `<svg class="theme-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`;
+  return `<svg class="theme-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
 }
 
 function money(value) {
