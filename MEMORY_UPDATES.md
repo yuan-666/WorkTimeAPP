@@ -18,6 +18,22 @@
 - 后续建议：
 ```
 
+## 2026-05-13 08:55 CST - v0.2.6 批量登记与移动端抽屉修复
+
+- 触发原因：用户反馈批量处理无法批量添加工时，期望每月自动登记基础工作日 8 小时、只有加班才额外登记；同时指出侧边栏底部溢出、移动端无页脚、管理员登录页页脚奇怪、移动日历压缩严重、手机版日期登记不够像 App，并要求检查已部署的 `time.yuan6.cn`。
+- 修改文件：`src/app.js`、`src/calculations.js`、`styles.css`、`admin.html`、`tests/calculations.test.js`、`package.json`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 批量添加拆为“补齐基础工时 8h”“批量登记加班”“按班次模板添加”；正班+加班、底薪+加班默认补齐基础工作日，综合工时制和小时计算默认登记每天加班。
+  - 已有同日加班记录时，补齐基础工时不再被跳过；勾选覆盖时只替换基础工时或同来源批量加班，不误删另一类记录。
+  - 批量删除的“仅批量生成”可识别 `bulk-base`、`bulk-overtime`，仅加班删除不再误删带加班的主班次。
+  - 移动端点击日历日期会打开底部登记抽屉，保存后自动收起；日历改为横向保留完整 7 列宽度，节假日、休息、调休和工资信息更可读。
+  - 侧边栏底部更新日志和友情链接改为不溢出的网格布局，并允许侧边栏纵向滚动；移动端底部导航新增紧凑页脚。
+  - 管理员登录页移除 GitHub、博客和版权页脚，只保留返回应用入口。
+  - `APP_VERSION` 更新为 `v0.2.6`，`sw.js` 缓存名更新到 `worktimeapp-v18`。
+- 验证结果：`npm test` 36 项通过；`npm run build` 成功输出 `dist/`；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`admin.html` 内联脚本解析通过；`git diff --check` 通过；线上 `https://time.yuan6.cn/api/cloud/key` GET 可返回 RSA 公钥，`/` 与 `/admin` 可访问，但静态资源仍是发布前的 `v0.2.5`。
+- 风险/注意：移动端登记抽屉复用现有日记录表单，后续可继续做更完整的二级页面/手势体验；线上 ESA 当前 `/` 可访问但疑似仍是旧构建壳，发布后需要确认 Pages 缓存刷新。
+- 后续建议：发布后用真机检查日期抽屉、底部导航、日历横向滚动和批量补齐基础工时；若 ESA 继续返回旧文件，检查 Pages 输出目录是否为 `dist`、缓存刷新以及是否绑定到最新 GitHub 提交。
+
 ## 2026-05-13 00:55 CST - v0.2.5 GitHub 发布整理
 
 - 触发原因：用户要求把当前改动推送到 GitHub，写好版本描述文件、README、提交日志，并发布新的版本。

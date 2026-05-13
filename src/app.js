@@ -5,7 +5,9 @@ import {
   SALARY_MODES,
   WORK_LIMITS,
   buildCalendarDays,
+  buildBaseWorkEntry,
   buildEntryFromShiftPreset,
+  buildOvertimeEntry,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
   calculateMonthlyPayroll,
@@ -16,6 +18,7 @@ import {
   getHolidayInfo,
   getShiftPreset,
   getUnloggedDays,
+  hasBaseWorkEntryForDate,
   inferDayType,
   mergeSettings,
   monthIndexFromDate,
@@ -39,8 +42,8 @@ import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js";
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.2.5";
-const RELEASE_COUNT = 15;
+const APP_VERSION = "v0.2.6";
+const RELEASE_COUNT = 16;
 const CLOUD_API_BASE = "/api/cloud";
 let state = loadState();
 let ui = {
@@ -52,7 +55,9 @@ let ui = {
   entryAdvanced: false,
   entryIntent: "",
   entryError: "",
+  entrySheetOpen: false,
   bulkMode: "add",
+  bulkAddKind: "",
   notice: "",
   lastDeleted: null,
   recordsSearch: "",
@@ -117,6 +122,9 @@ document.addEventListener("click", async (event) => {
     ui.entryAdvanced = false;
     ui.entryIntent = "";
     ui.entryError = "";
+    if (isMobileViewport() && target.closest(".calendar-panel, .unlogged-panel")) {
+      ui.entrySheetOpen = true;
+    }
     render();
     return;
   }
@@ -229,6 +237,13 @@ document.addEventListener("click", async (event) => {
     render();
   }
 
+  if (action === "close-entry-sheet") {
+    ui.entrySheetOpen = false;
+    ui.editingEntryId = "";
+    ui.entryError = "";
+    render();
+  }
+
   if (action === "toggle-entry-advanced") {
     ui.entryAdvanced = !ui.entryAdvanced;
     render();
@@ -311,7 +326,14 @@ document.addEventListener("input", (event) => {
     updateEntryPreview();
   }
   if (event.target.closest("#setup-form")) updateSetupPreview();
-  if (event.target.closest("#bulk-form")) updateBulkPreview();
+  if (event.target.closest("#bulk-form")) {
+    if (event.target.name === "addKind") {
+      ui.bulkAddKind = event.target.value;
+      render();
+      return;
+    }
+    updateBulkPreview();
+  }
 
   // Records filter
   if (event.target.dataset.filter === "search") {
@@ -341,7 +363,14 @@ document.addEventListener("change", async (event) => {
     updateEntryPreview();
   }
 
-  if (event.target.closest("#bulk-form")) updateBulkPreview();
+  if (event.target.closest("#bulk-form")) {
+    if (event.target.name === "addKind") {
+      ui.bulkAddKind = event.target.value;
+      render();
+      return;
+    }
+    updateBulkPreview();
+  }
 
   const settingsForm = event.target.closest("#settings-form");
   if (settingsForm) {
@@ -529,10 +558,13 @@ function renderSidebar() {
 function renderMobileNav() {
   return `
     <nav class="mobile-nav" aria-label="底部导航">
-      ${navButton("calendar", "月历")}
-      ${navButton("records", "记录")}
-      ${navButton("reports", "报表")}
-      ${navButton("settings", "设置")}
+      <div class="mobile-nav-row">
+        ${navButton("calendar", "月历")}
+        ${navButton("records", "记录")}
+        ${navButton("reports", "报表")}
+        ${navButton("settings", "设置")}
+      </div>
+      ${renderMobileFooter()}
     </nav>
   `;
 }
@@ -540,6 +572,10 @@ function renderMobileNav() {
 function navButton(view, label) {
   const active = ui.view === view ? "is-active" : "";
   return `<button class="nav-button ${active}" type="button" data-view="${view}" aria-current="${active ? "page" : "false"}">${label}</button>`;
+}
+
+function isMobileViewport() {
+  return window.matchMedia?.("(max-width: 720px)").matches;
 }
 
 function renderTopbar() {
@@ -646,13 +682,16 @@ function renderCalendarView() {
           ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
         </div>
       </section>
-      <section class="detail-panel" aria-label="每日记录">
+      ${ui.entrySheetOpen ? `<button class="entry-sheet-backdrop" type="button" data-action="close-entry-sheet" aria-label="关闭登记面板"></button>` : ""}
+      <section class="detail-panel day-entry-panel ${ui.entrySheetOpen ? "is-entry-sheet-open" : ""}" aria-label="每日记录">
+        <div class="sheet-handle" aria-hidden="true"></div>
         <div class="panel-head">
           <div>
             <p class="eyebrow">${selectedDateLabel(ui.selectedDate)}</p>
             <h2>每日记录</h2>
           </div>
           <div class="button-row">
+            <button class="icon-button mobile-sheet-close" type="button" data-action="close-entry-sheet" aria-label="关闭">×</button>
             ${ui.editingEntryId ? `<button class="plain-button" type="button" data-action="clear-edit">新增</button>` : `<button class="plain-button" type="button" data-action="copy-previous">复制昨天</button>`}
             <button class="plain-button" type="button" data-view="records">批量处理</button>
           </div>
@@ -757,8 +796,16 @@ function renderDayCell(day, entries, adjustments) {
     dayType === "restday" ? "is-restday" : "",
     holiday?.adjusted ? "is-adjusted" : ""
   ].filter(Boolean).join(" ");
+  const ariaParts = [
+    selectedDateLabel(day.date),
+    holiday?.name || DAY_TYPE_LABELS[dayType],
+    holiday?.adjusted ? "调休上班" : "",
+    marker ? `标记 ${marker}` : "",
+    hours ? `工时 ${hours} 小时` : "未记录工时",
+    pay ? `工资 ${money(pay)}` : ""
+  ].filter(Boolean).join("，");
   return `
-    <button class="${classes}" type="button" data-date="${day.date}">
+    <button class="${classes}" type="button" data-date="${day.date}" aria-label="${escapeAttr(ariaParts)}" title="${escapeAttr(ariaParts)}">
       <span class="day-number">${Number(day.date.slice(8, 10))}</span>
       ${marker ? `<span class="day-marker">${escapeHtml(marker)}</span>` : ""}
       ${note ? `<span class="day-note">${escapeHtml(note)}</span>` : ""}
@@ -1159,9 +1206,24 @@ function renderBulkPreview() {
   const preset = getShiftPreset(state.settings, state.settings.defaultPresetId);
   const start = `${ui.year}-${String(ui.monthIndex + 1).padStart(2, "0")}-01`;
   const end = formatDate(new Date(ui.year, ui.monthIndex + 1, 0));
-  const addPreview = previewBulkAdd({ start, end, rule: "workdays", presetId: preset?.id, overwrite: false });
+  const availableAddKinds = bulkAddKindOptions();
+  const currentKind = availableAddKinds.some((item) => item.value === ui.bulkAddKind)
+    ? ui.bulkAddKind
+    : defaultBulkAddKind();
+  ui.bulkAddKind = currentKind;
+  const addPreview = previewBulkAdd({
+    start,
+    end,
+    rule: "workdays",
+    presetId: preset?.id,
+    overwrite: false,
+    addKind: currentKind,
+    overtimeHours: 2
+  });
   const deletePreview = previewBulkDelete({ start, end, deleteKind: "bulk" });
   const bulkMode = ui.bulkMode || "add";
+  const isOvertimeAdd = currentKind === "overtime";
+  const isPresetAdd = currentKind === "preset";
   return `
     <form id="bulk-form" class="bulk-tool" data-bulk-mode="${escapeAttr(bulkMode)}">
       <div class="bulk-mode-switch" aria-label="批量操作类型">
@@ -1170,8 +1232,8 @@ function renderBulkPreview() {
       </div>
       <div class="bulk-summary" id="bulk-preview" data-add="${escapeAttr(addPreview.summary)}" data-delete="${escapeAttr(deletePreview.summary)}">
         <strong>${escapeHtml(bulkMode === "delete" ? deletePreview.summary : addPreview.summary)}</strong>
-        <span>${bulkMode === "delete" ? "删除前会先计算影响，且可撤销。" : "默认只补空白工作日，不覆盖已有记录。"}</span>
-        <small>${bulkMode === "delete" ? "为了防误删，需要勾选确认批量删除。" : "适合快速补齐整月白班、夜班或固定排班。"}</small>
+        <span>${bulkMode === "delete" ? "删除前会先计算影响，且可撤销。" : bulkAddKindHelp(currentKind)}</span>
+        <small>${bulkMode === "delete" ? "为了防误删，需要勾选确认批量删除。" : bulkAddKindDetail(currentKind)}</small>
       </div>
       <div class="form-grid">
         ${field("开始", `<input name="start" type="date" value="${escapeAttr(start)}" required>`)}
@@ -1182,7 +1244,7 @@ function renderBulkPreview() {
           ${field("删除范围", `
             <select name="deleteKind">
               <option value="bulk">仅批量生成</option>
-              <option value="overtime">仅加班记录</option>
+              <option value="overtime">仅批量加班</option>
               <option value="entries">全部工时记录</option>
               <option value="adjustments">全部补扣记录</option>
               <option value="all">工时和补扣都删</option>
@@ -1195,22 +1257,28 @@ function renderBulkPreview() {
         </div>
       ` : `
         <div class="form-grid">
-          ${field("添加规则", `
+          ${field("添加方式", `
+            <select name="addKind">
+              ${availableAddKinds.map((item) => option(item.value, item.label, currentKind)).join("")}
+            </select>
+          `)}
+          ${currentKind === "monthlyBase" ? "" : field("添加规则", `
             <select name="rule">
               <option value="workdays">仅工作日和调休上班</option>
               <option value="all">每天都添加</option>
               <option value="rest">只添加休息日/节假日</option>
             </select>
           `)}
-          ${field("班次", `
+          ${isOvertimeAdd ? field("每天加班", `<input name="overtimeHours" type="number" min="0" max="${WORK_LIMITS.maxOvertimeHours}" step="0.25" value="2" inputmode="decimal">`) : ""}
+          ${isPresetAdd ? field("班次", `
             <select name="presetId">
               ${state.settings.shiftPresets.map((item) => option(item.id, item.name, preset?.id)).join("")}
             </select>
-          `)}
+          `) : ""}
         </div>
         <label class="check-row slim">
           <input type="checkbox" name="overwrite" value="true">
-          <span>覆盖已有工时记录</span>
+          <span>${currentKind === "monthlyBase" ? "替换已有基础工时，不影响加班" : (currentKind === "overtime" ? "替换同来源批量加班" : "覆盖已有工时记录")}</span>
         </label>
       `}
       <div class="form-footer">
@@ -1221,6 +1289,34 @@ function renderBulkPreview() {
       </div>
     </form>
   `;
+}
+
+function defaultBulkAddKind() {
+  return [SALARY_MODES.REGULAR_OVERTIME, SALARY_MODES.BASE_OVERTIME].includes(state.settings.salaryMode)
+    ? "monthlyBase"
+    : "overtime";
+}
+
+function bulkAddKindOptions() {
+  const options = [];
+  if ([SALARY_MODES.REGULAR_OVERTIME, SALARY_MODES.BASE_OVERTIME].includes(state.settings.salaryMode)) {
+    options.push({ value: "monthlyBase", label: "补齐基础工时 8h" });
+  }
+  options.push({ value: "overtime", label: "批量登记加班" });
+  options.push({ value: "preset", label: "按班次模板添加" });
+  return options;
+}
+
+function bulkAddKindHelp(kind) {
+  if (kind === "monthlyBase") return "一键补齐本月基础工作日 8 小时；已有加班不会被跳过。";
+  if (kind === "overtime") return "只添加每天加班小时，适合综合工时制、小时工或补记固定加班。";
+  return "按当前班次模板批量生成，适合固定白班、夜班或休息日加班。";
+}
+
+function bulkAddKindDetail(kind) {
+  if (kind === "monthlyBase") return "默认只补没有基础工时的工作日，调休上班会包含，节假日和休息日会跳过。";
+  if (kind === "overtime") return "默认不重复添加同来源批量加班；勾选覆盖只替换批量加班，不动正班。";
+  return "默认只补空白日期；勾选覆盖会替换范围内已有工时。";
 }
 
 function renderAdjustmentForm() {
@@ -1422,6 +1518,22 @@ function renderAppFooter() {
         </div>
       </div>
     </footer>
+  `;
+}
+
+function renderMobileFooter() {
+  const year = new Date().getFullYear();
+  return `
+    <div class="mobile-footer-strip" aria-label="页脚">
+      <span>© ${year} yuan</span>
+      <a href="./changelog.html" aria-label="查看更新日志">${APP_VERSION}</a>
+      <a href="https://github.com/yuan-666/WorkTimeAPP" target="_blank" rel="noopener" aria-label="GitHub">
+        <svg width="15" height="15" aria-hidden="true"><use href="./assets/social-icons.svg#github-icon"></use></svg>
+      </a>
+      <a href="https://yuan6.cn" target="_blank" rel="noopener" aria-label="友情链接：yuan6.cn">
+        <svg width="15" height="15" aria-hidden="true"><use href="./assets/social-icons.svg#blog-icon"></use></svg>
+      </a>
+    </div>
   `;
 }
 
@@ -1796,6 +1908,7 @@ function saveEntryObject(entry, notice, options = {}) {
   ui.editingEntryId = "";
   ui.entryIntent = "";
   ui.entryError = "";
+  if (isMobileViewport()) ui.entrySheetOpen = false;
   persist(validation.warnings[0] ? `${notice}，${validation.warnings[0]}` : notice);
   render();
   return true;
@@ -2397,6 +2510,11 @@ function bulkApply(form, action) {
 
 function bulkAdd(form) {
   const config = bulkConfigFromForm(form);
+  if (config.addKind === "overtime" && (!Number.isFinite(config.overtimeHours) || config.overtimeHours <= 0)) {
+    persist("请先填写每天加班小时");
+    render();
+    return;
+  }
   const preview = previewBulkAdd(config);
   if (!preview.dates.length) {
     persist("没有可添加的日期");
@@ -2407,20 +2525,17 @@ function bulkAdd(form) {
   const targetDates = new Set(preview.dates);
   let removed = [];
   if (config.overwrite) {
-    removed = state.entries.filter((entry) => targetDates.has(entry.date));
+    removed = state.entries.filter((entry) => shouldRemoveForBulkOverwrite(entry, config, targetDates));
     if (removed.length) {
-      state.entries = state.entries.filter((entry) => !targetDates.has(entry.date));
+      const removedIds = new Set(removed.map((entry) => entry.id));
+      state.entries = state.entries.filter((entry) => !removedIds.has(entry.id));
     }
   }
 
   let count = 0;
   const addedIds = [];
   for (const date of preview.dates) {
-    const entry = buildEntryFromShiftPreset(date, preset, {
-      settings: state.settings,
-      dayType: preset?.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings),
-      source: "bulk"
-    });
+    const entry = buildBulkEntry(date, config, preset);
     const entryToSave = {
       ...entry,
       id: createId("entry"),
@@ -2486,10 +2601,10 @@ function updateBulkPreview() {
   preview.querySelector("strong").textContent = mode === "delete" ? deletePreview.summary : addPreview.summary;
   preview.querySelector("span").textContent = mode === "delete"
     ? "删除前会先计算影响，且可撤销。"
-    : "默认只补空白工作日，不覆盖已有记录。";
+    : bulkAddKindHelp(config.addKind);
   preview.querySelector("small").textContent = mode === "delete"
     ? (config.confirmDelete ? "已确认删除，提交后仍可撤销。" : "为了防误删，需要勾选确认批量删除。")
-    : (config.overwrite ? "已打开覆盖，批量添加会替换范围内已有工时。" : "适合快速补齐整月白班、夜班或固定排班。");
+    : (config.overwrite ? "已打开覆盖，只会按当前添加方式替换同类记录。" : bulkAddKindDetail(config.addKind));
 }
 
 function bulkConfigFromForm(form) {
@@ -2497,8 +2612,10 @@ function bulkConfigFromForm(form) {
   return {
     start: data.start,
     end: data.end,
+    addKind: data.addKind || ui.bulkAddKind || defaultBulkAddKind(),
     rule: data.rule || "workdays",
     presetId: data.presetId || state.settings.defaultPresetId,
+    overtimeHours: Number(data.overtimeHours || 0),
     overwrite: data.overwrite === "true",
     deleteKind: data.deleteKind || "bulk",
     confirmDelete: data.confirmDelete === "true"
@@ -2507,24 +2624,61 @@ function bulkConfigFromForm(form) {
 
 function previewBulkAdd(config) {
   const preset = getShiftPreset(state.settings, config.presetId);
-  const candidates = datesForBulkRule(config.start, config.end, config.rule);
-  const existing = new Set(state.entries.map((entry) => entry.date));
-  const dates = config.overwrite ? candidates : candidates.filter((date) => !existing.has(date));
+  const rule = config.addKind === "monthlyBase" ? "workdays" : config.rule;
+  const candidates = datesForBulkRule(config.start, config.end, rule);
+  const dates = config.overwrite
+    ? candidates
+    : candidates.filter((date) => !shouldSkipBulkAddDate(date, config));
   const skipped = candidates.length - dates.length;
   const samplePay = dates.reduce((sum, date) => {
-    const entry = buildEntryFromShiftPreset(date, preset, {
-      settings: state.settings,
-      dayType: preset?.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings)
-    });
+    const entry = buildBulkEntry(date, config, preset);
     return sum + calculateEntryPay(entry, state.settings).totalPay;
   }, 0);
+  const actionText = config.addKind === "monthlyBase"
+    ? "补齐基础工时"
+    : (config.addKind === "overtime" ? "添加加班" : "添加班次");
   return {
     dates,
     skipped,
     summary: dates.length
-      ? `将添加 ${dates.length} 天，跳过 ${skipped} 天，预计 ${money(samplePay)}`
-      : "没有可添加的日期。已记录或节假日已被自动跳过。"
+      ? `将${actionText} ${dates.length} 天，跳过 ${skipped} 天，预计 ${money(samplePay)}`
+      : "没有可添加的日期。已记录、已存在同类记录或节假日已被自动跳过。"
   };
+}
+
+function shouldSkipBulkAddDate(date, config) {
+  if (config.addKind === "monthlyBase") {
+    return hasBaseWorkEntryForDate(state.entries, date, state.settings);
+  }
+  if (config.addKind === "overtime") {
+    return state.entries.some((entry) => entry.date === date && entry.source === "bulk-overtime");
+  }
+  return state.entries.some((entry) => entry.date === date);
+}
+
+function shouldRemoveForBulkOverwrite(entry, config, targetDates) {
+  if (!targetDates.has(entry.date)) return false;
+  if (config.addKind === "monthlyBase") {
+    return hasBaseWorkEntryForDate([entry], entry.date, state.settings);
+  }
+  if (config.addKind === "overtime") {
+    return entry.source === "bulk-overtime";
+  }
+  return true;
+}
+
+function buildBulkEntry(date, config, preset) {
+  if (config.addKind === "monthlyBase") {
+    return buildBaseWorkEntry(date, state.settings, { source: "bulk-base", note: "基础工时" });
+  }
+  if (config.addKind === "overtime") {
+    return buildOvertimeEntry(date, config.overtimeHours || 0, state.settings, { source: "bulk-overtime", note: "批量加班" });
+  }
+  return buildEntryFromShiftPreset(date, preset, {
+    settings: state.settings,
+    dayType: preset?.dayType && preset.dayType !== "workday" ? preset.dayType : inferDayType(date, state.settings),
+    source: "bulk"
+  });
 }
 
 function previewBulkDelete(config) {
@@ -2534,8 +2688,8 @@ function previewBulkDelete(config) {
   const entries = state.entries.filter((entry) => {
     if (!inRange(entry)) return false;
     if (config.deleteKind === "all" || config.deleteKind === "entries") return true;
-    if (config.deleteKind === "bulk") return entry.source === "bulk";
-    if (config.deleteKind === "overtime") return normalizeEntry(entry, state.settings).overtimeHours > 0;
+    if (config.deleteKind === "bulk") return isBulkGeneratedEntry(entry);
+    if (config.deleteKind === "overtime") return entry.source === "bulk-overtime";
     return false;
   });
   const adjustments = state.adjustments.filter((item) => {
@@ -2553,6 +2707,13 @@ function previewBulkDelete(config) {
       ? `将删除 ${count} 条，影响 ${hours}h，预计 ${money(pay)}`
       : "当前条件下没有可删除记录。换个范围或类型试试。"
   };
+}
+
+function isBulkGeneratedEntry(entry = {}) {
+  return ["bulk", "bulk-base", "bulk-overtime"].includes(entry.source)
+    || entry.note === "批量生成"
+    || entry.note === "基础工时"
+    || entry.note === "批量加班";
 }
 
 function datesForBulkRule(start, end, rule) {
@@ -2673,6 +2834,8 @@ function repairRepeatedEntries() {
 function normalizeLegacySource(entry) {
   if (entry.source) return entry;
   if (entry.note === "快速加班") return { ...entry, source: "quick-overtime" };
+  if (entry.note === "基础工时") return { ...entry, source: "bulk-base" };
+  if (entry.note === "批量加班") return { ...entry, source: "bulk-overtime" };
   if (entry.note === "批量生成") return { ...entry, source: "bulk" };
   if (entry.note === "复制上次") return { ...entry, source: "copied" };
   return entry;

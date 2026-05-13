@@ -13,10 +13,13 @@ import {
   calculateMonthlyPayroll,
   calculateRestReminder,
   calculateTimeHours,
+  buildBaseWorkEntry,
   buildCalendarDays,
   buildEntryFromShiftPreset,
+  buildOvertimeEntry,
   getHolidayInfo,
   getUnloggedDays,
+  hasBaseWorkEntryForDate,
   inferDayType,
   isWorkday,
   mergeSettings,
@@ -332,6 +335,47 @@ test("entry validation keeps data limits without legal warning prompts", () => {
   assert.equal(summary.monthlyOvertimeHours, 40);
   assert.deepEqual(summary.warnings, []);
   assert.equal(summary.dailyHardOvertimeDays.length, 10);
+});
+
+test("monthly base work entries do not treat overtime-only entries as existing base", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.REGULAR_OVERTIME,
+    regularHourlyRate: 30,
+    normalHoursPerDay: 8
+  });
+  const overtime = buildOvertimeEntry("2026-05-06", 2, settings);
+  assert.equal(overtime.regularHours, 0);
+  assert.equal(overtime.overtimeHours, 2);
+  assert.equal(hasBaseWorkEntryForDate([overtime], "2026-05-06", settings), false);
+
+  const base = buildBaseWorkEntry("2026-05-06", settings);
+  assert.equal(base.regularHours, 8);
+  assert.equal(base.overtimeHours, 0);
+  assert.equal(hasBaseWorkEntryForDate([overtime, base], "2026-05-06", settings), true);
+
+  const payroll = calculateMonthlyPayroll([overtime, base], [], settings, 2026, 4);
+  assert.equal(payroll.regularHours, 8);
+  assert.equal(payroll.overtimeHours, 2);
+  assert.equal(payroll.regularPay, 240);
+  assert.equal(payroll.overtimePay, 90);
+});
+
+test("base plus overtime monthly base entries count attendance without duplicating base salary", () => {
+  const settings = mergeSettings({
+    salaryMode: SALARY_MODES.BASE_OVERTIME,
+    baseSalary: 6000,
+    baseOvertimeRate: 40,
+    normalHoursPerDay: 8,
+    overtimeMultiplier: 1.5
+  });
+  const base = buildBaseWorkEntry("2026-05-06", settings);
+  const overtime = buildOvertimeEntry("2026-05-06", 2, settings);
+  const payroll = calculateMonthlyPayroll([base, overtime], [], settings, 2026, 4);
+
+  assert.equal(payroll.basePay, 6000);
+  assert.equal(payroll.regularPay, 0);
+  assert.equal(payroll.totalHours, 10);
+  assert.equal(payroll.overtimePay, 120);
 });
 
 test("buildEntryFromShiftPreset supports defaults, rest days, and overnight shifts", () => {

@@ -539,6 +539,51 @@ export function buildEntryFromShiftPreset(date, preset = {}, overrides = {}) {
   return entry;
 }
 
+export function buildBaseWorkEntry(date, settings = DEFAULT_SETTINGS, overrides = {}) {
+  const merged = mergeSettings(settings);
+  const dayType = inferDayType(date, merged);
+  const regularHours = dayType === "workday"
+    ? clampNumberMax(merged.normalHoursPerDay, 0, WORK_LIMITS.maxRegularHours, LEGAL_RULES.dailyStandardHours)
+    : 0;
+  const entry = {
+    date,
+    recordMode: RECORD_MODES.HOURS,
+    dayType,
+    regularHours,
+    overtimeHours: 0,
+    totalHours: regularHours,
+    source: "bulk-base",
+    note: "基础工时",
+    ...overrides
+  };
+  return normalizeEntry(entry, merged);
+}
+
+export function buildOvertimeEntry(date, overtimeHours = 0, settings = DEFAULT_SETTINGS, overrides = {}) {
+  const merged = mergeSettings(settings);
+  const hours = clampNumberMax(overtimeHours, 0, WORK_LIMITS.maxOvertimeHours);
+  const entry = {
+    date,
+    recordMode: RECORD_MODES.HOURS,
+    dayType: inferDayType(date, merged),
+    regularHours: 0,
+    overtimeHours: hours,
+    totalHours: hours,
+    source: "bulk-overtime",
+    note: "批量加班",
+    ...overrides
+  };
+  return normalizeEntry(entry, merged);
+}
+
+export function hasBaseWorkEntryForDate(entries = [], date, settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  return entries.some((entry) => {
+    if (entry.date !== date || ["rest-day", "leave-note"].includes(entry.source)) return false;
+    return normalizeEntry(entry, merged).regularHours > 0;
+  });
+}
+
 export function validateEntry(entry = {}, settings = DEFAULT_SETTINGS, existingEntries = []) {
   const merged = mergeSettings(settings);
   const normalized = normalizeEntry(entry, merged);
