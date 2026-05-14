@@ -18,6 +18,19 @@
 - 后续建议：
 ```
 
+## 2026-05-14 16:30 CST - v0.3.4 本地联调 API 与版本发布
+
+- 触发原因：用户发现本地启动的服务器无法测试云备份接口（返回 404），要求修复并在修复后更新日志和版本号推送。
+- 修改文件：`scripts/serve.mjs`（新增）、`package.json`、`index.html`、`sw.js`、`src/app.js`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 编写了 Node.js 原生的代理服务器 `scripts/serve.mjs`，拦截 `/api/` 路由并直接转发给 `functions/index.js`。
+  - 使用本地 `.local-kv.json` 模拟实现了云端的 ESA KV 数据库。
+  - 将 `package.json` 中的 `serve` 脚本替换为 `node scripts/serve.mjs`。
+  - 提升版本号到 `v0.3.4`，更新 Service Worker 缓存到 `worktimeapp-v27`，更新各个文件的入口引用参数，同步修改 `CHANGELOG.md` 等更新日志。
+- 验证结果：重新启动 `npm run serve` 后，访问 127.0.0.1:4173 能够正常使用本地环境联调完整的云端账号注册、登录与同步逻辑，404 问题已解决。
+- 风险/注意：本地 mock KV 没有实现过期的逻辑控制，但测试云备份和登录功能足够使用。
+- 后续建议：如果线上增加更复杂的 ESA API 逻辑，可能也需要同步扩充 `serve.mjs` 中的 Mock 实现。
+
 ## 2026-05-14 15:40 CST - v0.3.3 UX/UI 细节打磨与 Bug 修复
 
 - 触发原因：作为 PM 角色审计整体效果，发现 iOS Blue 风格实现存在一些不优雅的细节和组件 Bug，并发现与 `DESIGN.md` 设计规范不一致。
