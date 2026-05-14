@@ -1175,3 +1175,17 @@ body.entry-sheet-locked { overflow: hidden; }
 .mcal-cell.is-selected .mcal-hours, .mcal-cell.is-selected .mcal-pay { color: var(--on-accent) !important; }
 .day-cell.is-selected, .day-cell.is-selected:hover { background: var(--accent) !important; color: var(--on-accent); }
 .day-cell.is-selected .day-number, .day-cell.is-selected .day-hours, .day-cell.is-selected .day-pay { color: var(--on-accent) !important; }
+
+/* =========================================
+   CALENDAR ANIMATIONS
+   ========================================= */
+@keyframes slideInLeft {
+  0% { transform: translateX(-40px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideInRight {
+  0% { transform: translateX(40px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+.slide-left { animation: slideInLeft 0.25s cubic-bezier(0.25, 1, 0.5, 1); }
+.slide-right { animation: slideInRight 0.25s cubic-bezier(0.25, 1, 0.5, 1); }

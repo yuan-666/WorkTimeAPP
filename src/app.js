@@ -30,20 +30,20 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.3.5";
+} from "./calculations.js?v=0.3.6";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.3.5";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.5";
+} from "./storage.js?v=0.3.6";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.6";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.3.5";
+const APP_VERSION = "v0.3.6";
 const RELEASE_COUNT = 21;
 const CLOUD_API_BASE = "/api/cloud";
 const CLOUD_SESSION_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -219,7 +219,10 @@ document.addEventListener("click", async (event) => {
     ui.entryAdvanced = false;
     ui.entryIntent = "";
     ui.entryError = "";
+    ui.calendarTransition = action === "next-month" ? "slide-right" : "slide-left";
     render();
+    setTimeout(() => { ui.calendarTransition = ""; }, 300);
+    return;
   }
 
   if (action === "today") {
@@ -390,7 +393,9 @@ document.addEventListener("touchend", (e) => {
   ui.monthIndex = m;
   ui.year = y;
   ui.selectedDate = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+  ui.calendarTransition = delta > 0 ? "slide-right" : "slide-left";
   render();
+  setTimeout(() => { ui.calendarTransition = ""; }, 300);
 });
 
 document.addEventListener("submit", (event) => {
@@ -531,7 +536,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.5", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.6", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -940,7 +945,7 @@ function renderCalendarView() {
             <div class="weekday-grid">
               ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
             </div>
-            <div class="calendar-grid">
+            <div class="calendar-grid ${ui.calendarTransition || ""}">
               ${renderCalendarWithWeekSummaries(days, entriesByDate, adjustmentsByDate)}
             </div>
           </section>`
@@ -1018,7 +1023,7 @@ function renderCalendarListView(days, entriesByDate, adjustmentsByDate, expanded
     `;
   }).join("");
   return `
-    <section class="calendar-panel mcal-panel" aria-label="日历">
+    <section class="calendar-panel mcal-panel ${ui.calendarTransition || ""}" aria-label="日历">
       ${html}
       ${!expanded ? `<button class="mcal-expand-btn" type="button" data-action="expand-calendar">展开全部 ${weeks.length} 周</button>` : ""}
       ${expanded && weeks.length > 1 ? `<button class="mcal-collapse-btn" type="button" data-action="collapse-calendar">收起 · 只看本周</button>` : ""}

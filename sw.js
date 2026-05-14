@@ -1,5 +1,5 @@
-const CACHE_NAME = "worktimeapp-v28";
-const ASSET_VERSION = "v=0.3.5";
+const CACHE_NAME = "worktimeapp-v29";
+const ASSET_VERSION = "v=0.3.6";
 const ASSETS = [
   "./",
   "./index.html",
