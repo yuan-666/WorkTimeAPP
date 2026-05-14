@@ -1258,7 +1258,10 @@ function renderEntryForm() {
       <div id="entry-error" class="form-error" role="alert" ${ui.entryError ? "" : "hidden"}>${escapeHtml(ui.entryError)}</div>
       <div class="form-footer form-footer-strong">
         <output id="entry-preview">0h / ¥0.00</output>
-        <button class="primary-button submit-button" type="submit" name="saveMode" value="work">${editing ? "保存修改" : (sourceHint === "leave-note" ? "保存请假" : "保存今日记录")}</button>
+        <div class="button-row">
+          ${editing ? `<button class="plain-button danger" type="button" data-delete-entry="${escapeAttr(editing.id)}">删除</button>` : ""}
+          <button class="primary-button submit-button" type="submit" name="saveMode" value="work">${editing ? "保存修改" : (sourceHint === "leave-note" ? "保存请假" : "保存今日记录")}</button>
+        </div>
       </div>
     </form>
   `;
@@ -2092,12 +2095,10 @@ function renderSettingsView() {
       ${renderCloudSyncPanel()}
       <div class="form-footer">
         <label class="file-button">
-          导入
+          导入本地备份
           <input id="import-file" type="file" accept="application/json,.json">
         </label>
-        <div class="button-row">
-          <button class="plain-button" type="button" data-action="backup">导出本地备份</button>
-        </div>
+        <button class="plain-button" type="button" data-action="backup">导出本地备份</button>
       </div>
     </div>`;
 
@@ -2170,18 +2171,15 @@ function renderSettingsView() {
             const isVisibleDetail = sheetGroup === group.id;
             return `
             <div class="settings-mobile-detail ${isVisibleDetail ? "is-visible" : ""}" data-settings-detail="${group.id}" aria-hidden="${isVisibleDetail ? "false" : "true"}" ${isVisibleDetail ? "" : "inert"}>
-              <div class="settings-detail-header">
-                <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                </button>
-                <h2>${escapeHtml(group.title)}</h2>
-                <span></span>
-              </div>
               <form class="tool-form settings-detail-form" data-settings-group="${group.id}" data-tax-other-mode="${escapeAttr(settings.tax.otherDeductionMode)}" data-tax-social-mode="${escapeAttr(settings.tax.socialSecurityMode)}" data-rest-cycle-mode="${escapeAttr(settings.restCycle.mode)}">
-                ${groupBodies[group.id]}
-                <div class="settings-detail-save">
-                  <button class="primary-button" type="submit">保存</button>
+                <div class="settings-detail-header">
+                  <button class="mobile-back-btn" type="button" data-action="close-settings-sheet">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  </button>
+                  <h2>${escapeHtml(group.title)}</h2>
+                  <button class="plain-button" type="submit" style="color: var(--accent); padding: 0 16px; font-weight: 600; background: transparent; width: 36px; display: inline-flex; justify-content: flex-end; align-items: center;">保存</button>
                 </div>
+                ${groupBodies[group.id]}
               </form>
             </div>
           `;

@@ -719,8 +719,6 @@ body.entry-sheet-locked { overflow: hidden; }
   border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--accent); flex-shrink: 0;
 }
 .mobile-back-btn:active { background: var(--surface-hover); }
-.settings-detail-save { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.settings-detail-save .primary-button { width: 100%; }
 .settings-mobile-menu { display: grid; gap: 2px; }
 .settings-menu-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
