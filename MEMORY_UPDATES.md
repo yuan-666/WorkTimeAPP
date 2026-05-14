@@ -18,6 +18,26 @@
 - 后续建议：
 ```
 
+## 2026-05-14 02:00 CST - v0.3.2 iOS 原生风格重构、拇指区交互与暗色修复
+
+- 触发原因：用户要求纯 iOS HIG 风格彻底重构、月份切换下沉到拇指区、暗色模式全面修复、选中日期空白问题。
+- 修改文件：`index.html`、`styles.css`、`src/app.js`、`functions/index.js`。
+- 行为变化：
+  - 全面替换为 iOS 原生风格：`#F2F2F7` 浅灰底 + `#FFFFFF` 白卡片，暗色 `#000000` 纯黑底，`#007AFF` 经典蓝 accent。删除所有玻璃拟态、毛玻璃、弥散光背景。
+  - 全局微交互：`button:active { transform: scale(0.96) }` 物理收缩感，`cubic-bezier(0.25, 1, 0.5, 1)` 弹簧缓动。
+  - 手机版四宫格（税前 | 距目标 / 总上班 X天 Xh | 总加班 Xh），休息倒计时独立长条框。
+  - 月份切换「‹ 回到今天 ›」移至日历顶部，移除底部 thumb-zone。
+  - 左右滑动翻页手势（`touchstart` + `touchend`，±60px 触发）。
+  - 修复明暗切换：新增 `[data-theme="dark"]` 和 `[data-theme="light"]` CSS 变量块，SVG 图标 `color: var(--ink)` 正确继承，`pointer-events` 修复。
+  - 修复选中日期空白：`.is-selected` 移至 `.has-data`/`.has-work` 之后，末尾追加 `!important` 胜利规则，保证选中背景在所有状态下可见。
+  - 云备份新增密码修改功能（验证旧密码 + 新密码加密，ESA KV 更新）。
+  - API 安全加固：每 IP 限 10 次/分钟 POST，请求体 ≤500KB，过滤意外字段，密码 ≤128 字符。
+  - 全局 `*` 重置移除 `margin:0;padding:0`，button/input 重置移除 `border:none;background:transparent`。
+  - `--accent` 变量定义于 `:root`（`#007AFF`）、`:root[data-theme="dark"]`（`#0A84FF`）、`:root[data-theme="light"]`，`@media` 使用 `:not([data-theme="light"])` 兜底。
+- 验证结果：`node --check` 全通过；`npm test` 45 项通过；`npm run build` 成功；浏览器实测选中日期浅色 `bg=#007AFF`、暗色 `bg=#0A84FF`，白字可见。
+- 风险/注意：`is-selected` 胜利规则使用 `!important`，后续若新增状态类需确保不产生冲突。左右滑动仅在日历页生效，且 entrySheet 打开时不触发。
+- 后续建议：可考虑将 `mcal-cell` 状态规则统一定义在文件末尾以简化级联管理。
+
 ## 2026-05-13 23:59 CST - v0.3.2 手机日历布局重构与暗色模式颜色修复
 
 - 触发原因：用户要求手机月历页重新布局（工资+工时+目标+放假四宫格、月份切换独立一行）、暗色模式下提示框白底白字等颜色问题修复、冗余文案清理。

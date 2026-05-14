@@ -34,12 +34,18 @@ async function handleCloud(request, env, url) {
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
+  const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
+  if (contentLength > 500000) return json({ error: "请求体过大" }, 413);
+
   const payload = await request.json();
   const action = resolveAction(url, payload);
+  const unknownFields = validatePayloadFields(action, payload);
+  if (unknownFields.length) return json({ error: "请求包含未知字段" }, 400);
   const userId = normalizeUserId(payload.userId);
   if (!userId) return json({ error: "用户 ID 仅支持 3-64 位字母、数字、下划线或短横线" }, 400);
 
   const client = getClientInfo(request);
+  if (!await checkRateLimit(kv, client)) return json({ error: "请求过于频繁，请稍后再试" }, 429);
   const key = userKey(userId);
   const existing = await readRecord(kv, key);
   const keyMaterial = await readPasswordKeyMaterial(kv).catch(() => null);
@@ -127,6 +133,39 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, next);
     await updateUserIndex(kv, userId, next);
     await recordUsage(kv, "push", client, userId);
+    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
+  }
+
+  if (action === "change-password") {
+    const session = await verifyUserSession(request, kv, payload.sessionToken, keyMaterial);
+    if (session && session.sub !== userId) {
+      await recordUsage(kv, "login_failed", client, userId);
+      return json({ error: "登录信息已过期，请重新登录" }, 401);
+    }
+    if (!session) {
+      if (!payload.passwordCipher) return json({ error: "登录信息已过期，请重新登录" }, 401);
+      const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
+      if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
+      const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
+      if (!verified) {
+        await recordUsage(kv, "login_failed", client, userId);
+        return json({ error: "原密码不正确" }, 401);
+      }
+    }
+    if (existing.status === "disabled") return json({ error: "账号已停用，暂时无法云备份" }, 403);
+    if (!payload.newPasswordCipher) return json({ error: "请提供新密码" }, 400);
+    const newPassword = await decryptPasswordPayload(kv, payload, "newPasswordCipher", keyMaterial);
+    if (newPassword.length < 6) return json({ error: "新密码至少 6 位" }, 400);
+    const passwordInfo = await hashPassword(newPassword);
+    const now = new Date().toISOString();
+    const next = {
+      ...existing,
+      ...passwordInfo,
+      updatedAt: now
+    };
+    await writeRecord(kv, key, next);
+    await updateUserIndex(kv, userId, next);
+    await recordUsage(kv, "change_password", client, userId);
     return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
 
@@ -339,7 +378,9 @@ async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher",
   } catch {
     throw httpError("登录信息校验失败，请刷新页面后重试", 401);
   }
-  return new TextDecoder().decode(decrypted);
+  const password = new TextDecoder().decode(decrypted);
+  if (password.length > 128) throw httpError("密码过长", 400);
+  return password;
 }
 
 async function readPasswordKeyMaterial(kv, cached = null) {
@@ -683,6 +724,34 @@ function userKey(userId) {
 
 function userMetaKey(userId) {
   return `user:meta:${userId}`;
+}
+
+const ALLOWED_PAYLOAD_FIELDS = {
+  register: ["action", "userId", "passwordCipher", "passwordKeyId", "data"],
+  login: ["action", "userId", "passwordCipher", "passwordKeyId", "sessionToken"],
+  pull: ["action", "userId", "passwordCipher", "passwordKeyId", "sessionToken"],
+  push: ["action", "userId", "passwordCipher", "passwordKeyId", "sessionToken", "data", "knownUpdatedAt", "force"],
+  "change-password": ["action", "userId", "passwordCipher", "passwordKeyId", "sessionToken", "newPasswordCipher"]
+};
+
+function validatePayloadFields(action, payload) {
+  const allowed = ALLOWED_PAYLOAD_FIELDS[action];
+  if (!allowed) return [];
+  return Object.keys(payload).filter((k) => !allowed.includes(k));
+}
+
+async function checkRateLimit(kv, client) {
+  const key = `rate:ip:${client.ip}`;
+  const entry = await readRecord(kv, key) || { count: 0, windowStart: 0 };
+  const now = Date.now();
+  const windowMs = 60000;
+  if (now - (entry.windowStart || 0) > windowMs) {
+    await writeRecord(kv, key, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= 10) return false;
+  await writeRecord(kv, key, { count: entry.count + 1, windowStart: entry.windowStart });
+  return true;
 }
 
 function json(body, status = 200) {

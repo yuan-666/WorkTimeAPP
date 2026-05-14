@@ -73,7 +73,8 @@ let ui = {
   pageTransition: true,
   hoursMode: "total",
   restInfoMode: "rest",
-  calendarExpanded: true
+  calendarExpanded: true,
+  cloudChangePasswordOpen: false
 };
 const repairedOnLoad = repairRepeatedEntries();
 if (repairedOnLoad) {
@@ -373,6 +374,25 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+let touchStartX = 0;
+document.addEventListener("touchstart", (e) => {
+  touchStartX = e.touches[0].clientX;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (ui.view !== "calendar" || !isMobileViewport() || ui.entrySheetOpen) return;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dx) < 60) return;
+  const delta = dx > 0 ? -1 : 1;
+  let m = ui.monthIndex + delta;
+  let y = ui.year;
+  if (m < 0) { m = 11; y--; }
+  else if (m > 11) { m = 0; y++; }
+  ui.monthIndex = m;
+  ui.year = y;
+  ui.selectedDate = `${y}-${String(m + 1).padStart(2, "0")}-01`;
+  render();
+});
+
 document.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
@@ -538,7 +558,7 @@ function render() {
       <main class="main ${ui.pageTransition ? "is-page-entering" : ""}">
         ${renderTopbar()}
         ${ui.view === "settings" ? renderReadiness() : ""}
-        ${ui.view === "calendar" ? renderCalendarRestReminder() : ""}
+        ${ui.view === "calendar" && !isMobileViewport() ? renderCalendarRestReminder() : ""}
         ${ui.notice ? `<p class="notice" role="status">${escapeHtml(ui.notice)}${ui.lastDeleted ? ` <button type="button" data-action="undo-delete">撤销</button>` : ""}</p>` : ""}
         ${ui.view === "calendar" ? renderCalendarView() : ""}
         ${ui.view === "records" ? renderRecordsView() : ""}
@@ -658,7 +678,7 @@ function setupChoiceButton(name, value, title, detail, current) {
 
 function renderSidebar() {
   return `
-    <aside class="sidebar" aria-label="主导航">
+    <aside class="sidebar glass-panel" aria-label="主导航">
       <div class="brand">
         <img src="./assets/icon.svg" alt="" width="40" height="40">
         <div>
@@ -682,26 +702,30 @@ function renderMobileNav() {
   const isSubPage = !mainViews.includes(ui.view);
   if (isSubPage) {
     return `
-      <nav class="mobile-nav mobile-nav-back" aria-label="返回">
-        <button class="mobile-back-button" type="button" data-view="calendar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          <span>返回</span>
-        </button>
-        <span class="mobile-page-title">${viewTitle(ui.view)}</span>
-        <span></span>
-      </nav>
+      <div class="mobile-bottom-zone">
+        <nav class="mobile-nav mobile-nav-back" aria-label="返回">
+          <button class="mobile-back-button" type="button" data-view="calendar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            <span>返回</span>
+          </button>
+          <span class="mobile-page-title">${viewTitle(ui.view)}</span>
+          <span></span>
+        </nav>
+      </div>
     `;
   }
   return `
-    <nav class="mobile-nav" aria-label="底部导航">
-      <div class="mobile-nav-row">
-        ${navButton("calendar", "月历")}
-        ${navButton("records", "记录")}
-        ${navButton("reports", "报表")}
-        ${navButton("settings", "设置")}
-      </div>
-      ${renderMobileFooter()}
-    </nav>
+    <div class="mobile-bottom-zone">
+      <nav class="mobile-nav" aria-label="底部导航">
+        <div class="mobile-nav-row">
+          ${navButton("calendar", "月历")}
+          ${navButton("records", "记录")}
+          ${navButton("reports", "报表")}
+          ${navButton("settings", "设置")}
+        </div>
+        ${renderMobileFooter()}
+      </nav>
+    </div>
   `;
 }
 
@@ -718,11 +742,12 @@ function renderTopbar() {
   const payroll = calculateMonthlyPayroll(state.entries, state.adjustments, state.settings, ui.year, ui.monthIndex);
   const grossByMonth = summarizeYear(state.entries, state.adjustments, state.settings, ui.year).map((item) => item.grossBeforeTax);
   const tax = calculateCumulativeTaxForMonth(grossByMonth, state.settings, ui.monthIndex);
-  const goalDelta = Number(state.settings.goals.monthlyIncome || 0) - (payroll.grossBeforeTax - tax.currentTax);
+  const monthlyGoal = Number(state.settings.goals.monthlyIncome || 0);
+  const goalDelta = monthlyGoal - (payroll.grossBeforeTax - tax.currentTax);
   const isCalendarMobile = ui.view === "calendar" && isMobileViewport();
 
   if (isCalendarMobile) {
-    return renderMobileCalendarTopbar(payroll, goalDelta);
+    return renderMobileCalendarTopbar(payroll, goalDelta, monthlyGoal);
   }
 
   return `
@@ -749,39 +774,37 @@ function renderTopbar() {
   `;
 }
 
-function renderMobileCalendarTopbar(payroll, goalDelta) {
-  const hoursLabel = ui.hoursMode === "total" ? "总工时" : "总加班";
-  const hoursValue = ui.hoursMode === "total" ? payroll.totalHours : payroll.overtimeHours;
-  const restReminder = calculateRestReminder(today, state.settings, state.entries);
-  const showRest = ui.restInfoMode === "rest";
-  const restLabel = showRest ? (restReminder.label || "放假提醒") : "本月上班";
-  const restValue = showRest
-    ? (restReminderText(restReminder) || "—")
-    : `${payroll.attendanceDays}天`;
+function renderMobileCalendarTopbar(payroll, goalDelta, monthlyGoal) {
   return `
     <header class="topbar mobile-cal-topbar">
       <div class="mobile-cal-head">
         <p class="eyebrow">${ui.year}年${MONTHS[ui.monthIndex]}</p>
         <button class="plain-button theme-button mobile-theme-btn" type="button" data-action="toggle-theme" title="${themeModeLabel(state.settings.themeMode)}" aria-label="切换明暗">${themeIcon(state.settings.themeMode)}</button>
       </div>
+      <div class="mobile-month-nav" aria-label="月份切换">
+        <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
+        <button class="plain-button" type="button" data-action="today">回到今天</button>
+        <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
+      </div>
       <section class="metric-strip mobile-metric-strip" aria-label="本月汇总">
         <div class="metric">
           <span>税前</span>
           <strong>${money(payroll.grossBeforeTax)}</strong>
         </div>
-        <button class="metric metric-clickable" type="button" data-action="toggle-hours-mode">
-          <span>${hoursLabel}</span>
-          <strong>${hoursValue}h</strong>
-        </button>
         <div class="metric">
           <span>${goalDelta > 0 ? "距目标" : "超目标"}</span>
           <strong>${money(Math.abs(goalDelta))}</strong>
         </div>
-        <button class="metric metric-clickable" type="button" data-action="toggle-rest-info">
-          <span>${escapeHtml(restLabel)}</span>
-          <strong>${escapeHtml(restValue)}</strong>
-        </button>
+        <div class="metric">
+          <span>总上班</span>
+          <strong>${payroll.attendanceDays}天 ${payroll.totalHours}h</strong>
+        </div>
+        <div class="metric">
+          <span>总加班</span>
+          <strong>${payroll.overtimeHours}h</strong>
+        </div>
       </section>
+      ${renderRestReminderBar()}
     </header>
   `;
 }
@@ -851,18 +874,17 @@ function restReminderText(reminder) {
   return `${reminder.detail}${reminder.nextRestDate ? ` · 下次 ${reminder.nextRestDate}` : ""}`;
 }
 
+function renderRestReminderBar() {
+  const restReminder = calculateRestReminder(today, state.settings, state.entries);
+  return `
+    <div class="rest-reminder-bar ${restReminder.isRestDue ? "is-due" : ""}">
+      <span>${escapeHtml(restReminder.label || "放假提醒")}</span>
+      <strong>${escapeHtml(restReminderText(restReminder))}</strong>
+    </div>
+  `;
+}
+
 function renderCalendarRestReminder() {
-  const isMobileCal = isMobileViewport();
-  if (isMobileCal) {
-    const isCurrentMonth = ui.year === now.getFullYear() && ui.monthIndex === now.getMonth();
-    return `
-      <section class="mobile-month-nav" aria-label="月份切换">
-        <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
-        <button class="plain-button" type="button" data-action="today">${isCurrentMonth ? "今天" : "回到本月"}</button>
-        <button class="icon-button" type="button" data-action="next-month" aria-label="下个月">›</button>
-      </section>
-    `;
-  }
   const restReminder = calculateRestReminder(today, state.settings, state.entries);
   const payroll = calculateMonthlyPayroll(state.entries, state.adjustments, state.settings, ui.year, ui.monthIndex);
   const showRest = ui.restInfoMode === "rest";
@@ -871,7 +893,7 @@ function renderCalendarRestReminder() {
     ? (restReminderText(restReminder))
     : `${payroll.attendanceDays} 天 · ${payroll.totalHours}h`;
   return `
-    <button class="rest-reminder-bar ${restReminder.isRestDue && showRest ? "is-due" : ""}" type="button" data-action="toggle-rest-info" aria-label="${label}">
+    <button class="rest-reminder-bar ${restReminder.isRestDue && showRest ? "is-due" : ""}" type="button" data-action="toggle-rest-info">
       <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(detail)}</strong>
     </button>
@@ -921,16 +943,16 @@ function renderCalendarView() {
             </div>
           </section>`
       }
-      ${ui.entrySheetOpen ? `<button class="entry-sheet-backdrop ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" type="button" data-action="close-entry-sheet" aria-label="关闭登记面板"></button>` : ""}
+      ${ui.entrySheetOpen ? `<div class="entry-sheet-backdrop ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" data-action="close-entry-sheet"></div>` : ""}
       <section class="detail-panel day-entry-panel ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" aria-label="每日记录" aria-hidden="${mobilePanelHidden ? "true" : "false"}" ${mobilePanelHidden ? "inert" : ""}>
         <div class="sheet-handle" aria-hidden="true"></div>
         <div class="panel-head">
           <div>
             <p class="eyebrow">${selectedDateLabel(ui.selectedDate)}</p>
-            <h2>每日记录</h2>
+            <h2>工作明细</h2>
           </div>
           <div class="button-row">
-            <button class="icon-button mobile-sheet-close" type="button" data-action="close-entry-sheet" aria-label="关闭">×</button>
+
             ${ui.editingEntryId ? `<button class="plain-button" type="button" data-action="clear-edit">新增</button>` : `<button class="plain-button" type="button" data-action="copy-previous">复制昨天</button>`}
             <button class="plain-button" type="button" data-view="records">批量处理</button>
           </div>
@@ -2221,8 +2243,24 @@ function renderCloudSyncPanel() {
       ${loggedIn ? `
         <div class="cloud-session-row">
           <span>${escapeHtml(cloud.userId)}</span>
-          <button class="plain-button" type="button" data-action="cloud-logout">退出登录</button>
+          <div class="button-row">
+            <button class="plain-button" type="button" data-action="cloud-change-password-form">修改密码</button>
+            <button class="plain-button" type="button" data-action="cloud-logout">退出登录</button>
+          </div>
         </div>
+        ${ui.cloudChangePasswordOpen ? `
+        <div class="cloud-change-password-form">
+          <div class="form-grid">
+            ${field("原密码", `<input name="cloud.password" type="password" autocomplete="current-password" placeholder="输入当前密码">`)}
+            ${field("新密码", `<input name="cloud.newPassword" type="password" autocomplete="new-password" placeholder="至少 6 位">`)}
+            ${field("确认新密码", `<input name="cloud.confirmPassword" type="password" autocomplete="new-password" placeholder="再次输入新密码">`)}
+          </div>
+          <div class="button-row">
+            <button class="primary-button" type="button" data-action="cloud-change-password">确认修改</button>
+            <button class="plain-button" type="button" data-action="cloud-change-password-form">取消</button>
+          </div>
+        </div>
+        ` : ""}
         <div class="cloud-task-grid">
           <div>
             <strong>上传本机</strong>
@@ -2460,7 +2498,7 @@ function settingsFromForm(form) {
   for (const [key, value] of Object.entries(data)) {
     if (key.startsWith("cloud.")) {
       const fieldName = key.split(".")[1];
-      if (fieldName !== "password") nextCloud[fieldName] = value;
+      if (fieldName !== "password" && fieldName !== "newPassword" && fieldName !== "confirmPassword") nextCloud[fieldName] = value;
       continue;
     }
     if (key.startsWith("workweek.")) {
@@ -2527,6 +2565,12 @@ function saveSetupWizard(form) {
 }
 
 async function handleCloudAction(action, sourceTarget = null) {
+  if (action === "cloud-change-password-form") {
+    ui.cloudChangePasswordOpen = !ui.cloudChangePasswordOpen;
+    render();
+    return;
+  }
+
   if (action === "cloud-logout") {
     state.cloud = normalizeCloudConfig({
       ...(state.cloud || {}),
@@ -2543,7 +2587,7 @@ async function handleCloudAction(action, sourceTarget = null) {
   const auth = cloudConfigFromForm(sourceTarget);
   const actionName = action.replace("cloud-", "");
   const hasSession = isCloudSessionValid(auth);
-  const needsPassword = actionName === "login" || actionName === "register" || !hasSession;
+  const needsPassword = actionName === "login" || actionName === "register" || actionName === "change-password" || !hasSession;
   if (!auth.userId) {
     persist("请填写云备份账号");
     render();
@@ -2568,11 +2612,29 @@ async function handleCloudAction(action, sourceTarget = null) {
     return;
   }
 
+  if (actionName === "change-password") {
+    if (!auth.newPassword) {
+      persist("请填写新密码");
+      render();
+      return;
+    }
+    if (auth.newPassword !== auth.confirmPassword) {
+      persist("两次新密码不一致");
+      render();
+      return;
+    }
+    if (auth.newPassword.length < 6) {
+      persist("新密码至少 6 位");
+      render();
+      return;
+    }
+  }
+
   const payload = {
     action: actionName,
     userId: auth.userId
   };
-  if (!needsPassword && auth.sessionToken) {
+  if (auth.sessionToken) {
     payload.sessionToken = auth.sessionToken;
   }
   if (actionName === "register" || actionName === "push") {
@@ -2586,6 +2648,10 @@ async function handleCloudAction(action, sourceTarget = null) {
       payload.passwordCipher = encryptedPassword.ciphertext;
       payload.passwordKeyId = encryptedPassword.keyId;
     }
+    if (actionName === "change-password") {
+      const encryptedNewPassword = await encryptCloudPassword(auth.newPassword);
+      payload.newPasswordCipher = encryptedNewPassword.ciphertext;
+    }
     let result = await postCloud(payload);
     if (!result.ok && actionName === "push" && result.status === 409) {
       const shouldOverwrite = window.confirm("云端已有更新。要用本机数据覆盖云端吗？覆盖后云端旧备份会被替换。");
@@ -2594,6 +2660,9 @@ async function handleCloudAction(action, sourceTarget = null) {
       }
     }
     if (!result.ok) throw new Error(cloudErrorMessage(actionName, result.error, result.status));
+    if (actionName === "change-password") {
+      ui.cloudChangePasswordOpen = false;
+    }
     const nextCloud = normalizeCloudConfig({
       ...state.cloud,
       userId: auth.userId,
@@ -2621,6 +2690,7 @@ function cloudErrorMessage(action, message, status) {
   if (!message) return "云同步失败，请检查网络后重试";
   if (message.includes("已存在")) return "该账号已存在，请直接登录";
   if (message.includes("账号或密码不正确")) return "账号或密码不正确，请检查后重试";
+  if (message.includes("原密码不正确")) return "原密码不正确，请检查后重试";
   if (message.includes("已停用")) return "账号已停用，暂时无法使用云备份";
   if (message.includes("已有更新")) return "云端已有新数据，本机数据未覆盖云端";
   if (message.includes("已过期") || message.includes("重新登录")) return "登录已过期，请重新输入密码";
@@ -2647,7 +2717,9 @@ function cloudConfigFromForm(sourceTarget = null) {
   saveState(state);
   return {
     ...cloud,
-    password: String(data["cloud.password"] || "")
+    password: String(data["cloud.password"] || ""),
+    newPassword: String(data["cloud.newPassword"] || ""),
+    confirmPassword: String(data["cloud.confirmPassword"] || "")
   };
 }
 
@@ -2751,7 +2823,8 @@ function cloudActionNotice(actionName) {
   return ({
     login: "云备份账号已登录",
     register: "已创建账号并备份本机数据",
-    push: "已上传本机数据到云端"
+    push: "已上传本机数据到云端",
+    "change-password": "密码已修改"
   })[actionName] || "云同步完成";
 }
 
@@ -3633,10 +3706,7 @@ function moneyFieldWithClass(label, name, value, className = "", options = {}) {
 
 function radio(name, value, label, current) {
   return `
-    <label>
-      <input type="radio" name="${name}" value="${value}" ${current === value ? "checked" : ""}>
-      <span>${label}</span>
-    </label>
+    <label><input type="radio" name="${name}" value="${value}" ${current === value ? "checked" : ""}><span>${label}</span></label>
   `;
 }
 
