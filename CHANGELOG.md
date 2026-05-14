@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.5 - 2026-05-14
+
+### Cloud / Backend
+- 修复了在线上环境云同步时报 500 错误的 Bug：大幅重构了后端代码，使用内存级别缓存复用了 `RSA_key` 读取和防刷接口（Rate Limit），并削减了冗余的用户元数据写入，将单次请求对 KV 的读写调用次数从 10 次以上大幅压缩至 5-7 次，彻底解决了阿里云 ESA 的“KV fetch call limit is exceeded” (上限 8 次) 报错问题。
+
 ## v0.3.4 - 2026-05-14
 
 ### UX / UI Polish

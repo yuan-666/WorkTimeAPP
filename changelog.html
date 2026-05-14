@@ -315,6 +315,21 @@
         <div class="timeline" aria-label="版本时间轴">
           <article class="item">
             <span class="index">01</span>
+            <span class="version">v0.3.5</span>
+            <div class="content">
+              <h2>突破 Serverless KV 限制</h2>
+              <span class="date">2026-05-14</span>
+              <ul>
+                <li>修复线上部署环境报错 500 的严重问题。</li>
+                <li>采用 Edge 边缘节点内存直读替换冗余的 ESA KV 数据读取。</li>
+                <li>将会话注册、云备份同步等操作单次 KV 调用次数从超标的 10 次压降至 5 次左右。</li>
+                <li>突破了阿里云边缘安全加速（ESA）服务严格的「单次请求最多调用 8 次 KV API」的性能防线，云同步恢复丝滑流畅。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">02</span>
             <span class="version">v0.3.4</span>
             <div class="content">
               <h2>UX/UI 细节打磨与本地 API 服务</h2>

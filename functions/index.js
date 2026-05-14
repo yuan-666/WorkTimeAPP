@@ -101,14 +101,16 @@ async function handleCloud(request, env, url) {
   }
   if (existing.status === "disabled") return json({ error: "账号已停用，暂时无法云备份" }, 403);
 
-  const touched = await touchUser(kv, existing, client, action);
+  const touched = touchUser(existing, client, action);
 
   if (action === "login") {
+    await writeRecord(kv, key, touched);
     await recordUsage(kv, "login", client, userId);
     return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
 
   if (action === "pull") {
+    await writeRecord(kv, key, touched);
     await recordUsage(kv, "pull", client, userId);
     return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)), data: touched.data || null });
   }
@@ -131,7 +133,6 @@ async function handleCloud(request, env, url) {
       data
     };
     await writeRecord(kv, key, next);
-    await updateUserIndex(kv, userId, next);
     await recordUsage(kv, "push", client, userId);
     return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
@@ -164,7 +165,6 @@ async function handleCloud(request, env, url) {
       updatedAt: now
     };
     await writeRecord(kv, key, next);
-    await updateUserIndex(kv, userId, next);
     await recordUsage(kv, "change_password", client, userId);
     return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
   }
@@ -284,9 +284,9 @@ async function buildAdminSummary(kv) {
   };
 }
 
-async function touchUser(kv, record, client, action) {
+function touchUser(record, client, action) {
   const now = new Date().toISOString();
-  const next = {
+  return {
     ...record,
     lastLoginAt: now,
     lastIP: client.ip,
@@ -294,16 +294,14 @@ async function touchUser(kv, record, client, action) {
     lastUserAgent: client.ua,
     loginCount: Number(record.loginCount || 0) + (action === "login" ? 1 : 0)
   };
-  await writeRecord(kv, userKey(record.userId), next);
-  await updateUserIndex(kv, record.userId, next);
-  return next;
 }
 
 async function updateUserIndex(kv, userId, record) {
   const ids = new Set(await readList(kv, USER_INDEX_KEY));
-  ids.add(userId);
-  await writeRecord(kv, USER_INDEX_KEY, [...ids].sort());
-  await writeRecord(kv, userMetaKey(userId), publicAdminUser(record));
+  if (!ids.has(userId)) {
+    ids.add(userId);
+    await writeRecord(kv, USER_INDEX_KEY, [...ids].sort());
+  }
 }
 
 async function recordUsage(kv, action, client, userId = "unknown") {
@@ -383,15 +381,18 @@ async function decryptPasswordPayload(kv, payload, fieldName = "passwordCipher",
   return password;
 }
 
+let cachedPasswordKeyMaterial = null;
 async function readPasswordKeyMaterial(kv, cached = null) {
   if (cached) return cached;
+  if (cachedPasswordKeyMaterial) return cachedPasswordKeyMaterial;
   const value = await readRecord(kv, PASSWORD_PRIVATE_KEY);
   const jwk = normalizePrivateJwk(value);
   if (!jwk) throw new Error("云端安全密钥未配置");
-  return {
+  cachedPasswordKeyMaterial = {
     jwk,
     raw: typeof value === "string" ? value : JSON.stringify(value)
   };
+  return cachedPasswordKeyMaterial;
 }
 
 function normalizePrivateJwk(value) {
@@ -722,10 +723,6 @@ function userKey(userId) {
   return `user:${userId}`;
 }
 
-function userMetaKey(userId) {
-  return `user:meta:${userId}`;
-}
-
 const ALLOWED_PAYLOAD_FIELDS = {
   register: ["action", "userId", "passwordCipher", "passwordKeyId", "data"],
   login: ["action", "userId", "passwordCipher", "passwordKeyId", "sessionToken"],
@@ -740,17 +737,17 @@ function validatePayloadFields(action, payload) {
   return Object.keys(payload).filter((k) => !allowed.includes(k));
 }
 
+const rateLimitMap = new Map();
 async function checkRateLimit(kv, client) {
-  const key = `rate:ip:${client.ip}`;
-  const entry = await readRecord(kv, key) || { count: 0, windowStart: 0 };
   const now = Date.now();
-  const windowMs = 60000;
-  if (now - (entry.windowStart || 0) > windowMs) {
-    await writeRecord(kv, key, { count: 1, windowStart: now });
+  const entry = rateLimitMap.get(client.ip) || { count: 0, windowStart: now };
+  if (now - entry.windowStart > 60000) {
+    rateLimitMap.set(client.ip, { count: 1, windowStart: now });
     return true;
   }
   if (entry.count >= 10) return false;
-  await writeRecord(kv, key, { count: entry.count + 1, windowStart: entry.windowStart });
+  entry.count += 1;
+  rateLimitMap.set(client.ip, entry);
   return true;
 }
 
