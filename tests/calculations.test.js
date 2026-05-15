@@ -4,6 +4,7 @@ import {
   LEGAL_RULES,
   RECORD_MODES,
   REST_CYCLE_MODES,
+  SHIFT_CALENDAR_KINDS,
   SALARY_MODES,
   WORK_LIMITS,
   calculateAnnualTax,
@@ -16,6 +17,7 @@ import {
   buildBaseWorkEntry,
   buildCalendarDays,
   buildEntryFromShiftPreset,
+  buildShiftCalendarDays,
   buildOvertimeEntry,
   getAutoFilledEntries,
   getHolidayInfo,
@@ -24,8 +26,10 @@ import {
   inferDayType,
   isWorkday,
   mergeSettings,
+  normalizeShiftCalendar,
   normalizeEntry,
   overtimeMultiplierForDay,
+  shiftCycleForDate,
   deriveSalaryInsights,
   validateEntry
 } from "../src/calculations.js";
@@ -537,6 +541,93 @@ test("calendar builder can use a custom week start", () => {
   assert.equal(new Date(`${sundayStart[0].date}T00:00:00`).getDay(), 0);
   assert.equal(sundayStart[0].date, "2026-04-26");
   assert.equal(new Date(`${wednesdayStart[0].date}T00:00:00`).getDay(), 3);
+});
+
+test("shift calendar rotates by anchor date and supports dates before anchor", () => {
+  const settings = mergeSettings({
+    weekStart: 1,
+    shiftCalendar: {
+      enabled: true,
+      anchorDate: "2026-05-15",
+      items: [
+        { id: "day", name: "白班", startTime: "08:00", endTime: "16:00", kind: SHIFT_CALENDAR_KINDS.DAY },
+        { id: "night", name: "夜班", startTime: "20:00", endTime: "08:00", kind: SHIFT_CALENDAR_KINDS.NIGHT },
+        { id: "rest", name: "休班", kind: SHIFT_CALENDAR_KINDS.REST }
+      ]
+    }
+  });
+
+  const anchor = shiftCycleForDate("2026-05-15", settings);
+  assert.equal(anchor.item.name, "白班");
+  assert.equal(anchor.cycleDay, 1);
+  assert.equal(anchor.cycleLength, 4);
+  assert.equal(anchor.cycleNumber, 1);
+  assert.equal(anchor.nextRestDate, "2026-05-18");
+
+  const beforeAnchor = shiftCycleForDate("2026-05-14", settings);
+  assert.equal(beforeAnchor.item.name, "休班");
+  assert.equal(beforeAnchor.cycleDay, 4);
+
+  const nextRound = shiftCycleForDate("2026-05-19", settings);
+  assert.equal(nextRound.item.name, "白班");
+  assert.equal(nextRound.cycleNumber, 2);
+});
+
+test("shift calendar default cycle uses day, night, off-night, and rest", () => {
+  const settings = mergeSettings({
+    shiftCalendar: {
+      enabled: true,
+      anchorDate: "2026-05-15"
+    }
+  });
+  const normalized = normalizeShiftCalendar(settings.shiftCalendar);
+  assert.deepEqual(normalized.items.map((item) => item.name), ["白班", "上夜班", "下夜班", "休班"]);
+  assert.deepEqual(normalized.items.map((item) => item.kind), [
+    SHIFT_CALENDAR_KINDS.DAY,
+    SHIFT_CALENDAR_KINDS.NIGHT,
+    SHIFT_CALENDAR_KINDS.OFF_NIGHT,
+    SHIFT_CALENDAR_KINDS.REST
+  ]);
+  assert.equal(normalized.items[2].startTime, "");
+  assert.equal(shiftCycleForDate("2026-05-17", settings).item.name, "下夜班");
+  assert.equal(shiftCycleForDate("2026-05-18", settings).item.name, "休班");
+});
+
+test("shift calendar migrates the old three-day default cycle to include off-night", () => {
+  const normalized = normalizeShiftCalendar({
+    enabled: true,
+    anchorDate: "2026-05-15",
+    items: [
+      { id: "day", name: "白班", startTime: "09:00", endTime: "18:00", kind: SHIFT_CALENDAR_KINDS.DAY },
+      { id: "night", name: "上夜班", startTime: "22:00", endTime: "06:00", kind: SHIFT_CALENDAR_KINDS.NIGHT },
+      { id: "rest", name: "休班", kind: SHIFT_CALENDAR_KINDS.REST }
+    ]
+  });
+  assert.deepEqual(normalized.items.map((item) => item.name), ["白班", "上夜班", "下夜班", "休班"]);
+});
+
+test("shift calendar month builder follows custom week start and normalizes invalid rows", () => {
+  const settings = mergeSettings({
+    weekStart: 3,
+    shiftCalendar: {
+      enabled: true,
+      anchorDate: "bad-date",
+      items: [
+        { name: "", startTime: "8", endTime: "18:00", kind: "bad-kind" },
+        { name: "休", kind: SHIFT_CALENDAR_KINDS.REST }
+      ]
+    }
+  });
+  const normalized = normalizeShiftCalendar(settings.shiftCalendar);
+  assert.equal(normalized.anchorDate, "2026-05-15");
+  assert.equal(normalized.items[0].name, "白班");
+  assert.equal(normalized.items[0].kind, SHIFT_CALENDAR_KINDS.DAY);
+  assert.equal(normalized.items[0].startTime, "09:00");
+  assert.equal(normalized.items[1].startTime, "");
+
+  const days = buildShiftCalendarDays(2026, 4, settings);
+  assert.equal(new Date(`${days[0].date}T00:00:00`).getDay(), 3);
+  assert.equal(days.find((day) => day.date === "2026-05-15").shift.item.name, "白班");
 });
 
 test("rest reminders support non-weekend shift cycles", () => {

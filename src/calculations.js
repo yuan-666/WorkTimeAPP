@@ -19,6 +19,45 @@ export const REST_CYCLE_MODES = {
   CUSTOM: "custom"
 };
 
+export const SHIFT_CALENDAR_KINDS = {
+  DAY: "day",
+  NIGHT: "night",
+  REST: "rest",
+  OFF_NIGHT: "offNight",
+  CUSTOM: "custom"
+};
+
+const DEFAULT_SHIFT_CALENDAR_ITEMS = [
+  {
+    id: "cycle-day",
+    name: "白班",
+    startTime: "09:00",
+    endTime: "18:00",
+    kind: SHIFT_CALENDAR_KINDS.DAY
+  },
+  {
+    id: "cycle-night",
+    name: "上夜班",
+    startTime: "22:00",
+    endTime: "06:00",
+    kind: SHIFT_CALENDAR_KINDS.NIGHT
+  },
+  {
+    id: "cycle-off-night",
+    name: "下夜班",
+    startTime: "",
+    endTime: "",
+    kind: SHIFT_CALENDAR_KINDS.OFF_NIGHT
+  },
+  {
+    id: "cycle-rest",
+    name: "休班",
+    startTime: "",
+    endTime: "",
+    kind: SHIFT_CALENDAR_KINDS.REST
+  }
+];
+
 export const LEGAL_RULES = {
   dailyStandardHours: 8,
   weeklyStandardHours: 44,
@@ -130,6 +169,14 @@ export const DEFAULT_SETTINGS = {
     workDays: 5,
     restDays: 2,
     lastRestDate: ""
+  },
+  shiftCalendar: {
+    enabled: false,
+    name: "我的倒班",
+    teamName: "1 班",
+    anchorDate: "2026-05-15",
+    anchorTime: "00:00",
+    items: DEFAULT_SHIFT_CALENDAR_ITEMS
   }
 };
 
@@ -267,7 +314,8 @@ export function mergeSettings(partial = {}) {
     autoAdjustment: { ...DEFAULT_SETTINGS.autoAdjustment, ...(partial.autoAdjustment || {}) },
     goals: { ...DEFAULT_SETTINGS.goals, ...(partial.goals || {}) },
     tax: { ...DEFAULT_SETTINGS.tax, ...(partial.tax || {}) },
-    restCycle: { ...DEFAULT_SETTINGS.restCycle, ...(partial.restCycle || {}) }
+    restCycle: { ...DEFAULT_SETTINGS.restCycle, ...(partial.restCycle || {}) },
+    shiftCalendar: normalizeShiftCalendar(partial.shiftCalendar || DEFAULT_SETTINGS.shiftCalendar)
   };
 }
 
@@ -312,6 +360,57 @@ export function normalizeShiftPresets(presets = DEFAULT_SETTINGS.shiftPresets) {
     overtimeHours: clampNumberMax(preset.overtimeHours, 0, WORK_LIMITS.maxOvertimeHours),
     totalHours: clampNumberMax(preset.totalHours, 0, WORK_LIMITS.maxEntryHours)
   }));
+}
+
+export function normalizeShiftCalendar(config = DEFAULT_SETTINGS.shiftCalendar) {
+  const source = config && typeof config === "object" ? config : DEFAULT_SETTINGS.shiftCalendar;
+  const rawItems = Array.isArray(source.items) && source.items.length
+    ? source.items
+    : DEFAULT_SHIFT_CALENDAR_ITEMS;
+  const items = rawItems.slice(0, 31).map((item, index) => normalizeShiftCalendarItem(item, index));
+  if (
+    items.length === 3
+    && !items.some((item) => item.kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT)
+    && items.some((item) => item.kind === SHIFT_CALENDAR_KINDS.NIGHT)
+    && items.some((item) => item.kind === SHIFT_CALENDAR_KINDS.REST)
+  ) {
+    const restIndex = items.findIndex((item) => item.kind === SHIFT_CALENDAR_KINDS.REST);
+    items.splice(restIndex >= 0 ? restIndex : items.length, 0, {
+      id: "cycle-off-night",
+      name: "下夜班",
+      startTime: "",
+      endTime: "",
+      kind: SHIFT_CALENDAR_KINDS.OFF_NIGHT
+    });
+  }
+  return {
+    enabled: Boolean(source.enabled),
+    name: String(source.name || DEFAULT_SETTINGS.shiftCalendar.name).trim().slice(0, 24) || DEFAULT_SETTINGS.shiftCalendar.name,
+    teamName: String(source.teamName || DEFAULT_SETTINGS.shiftCalendar.teamName).trim().slice(0, 18) || DEFAULT_SETTINGS.shiftCalendar.teamName,
+    anchorDate: isValidDateString(String(source.anchorDate || ""))
+      ? String(source.anchorDate)
+      : DEFAULT_SETTINGS.shiftCalendar.anchorDate,
+    anchorTime: normalizeTimeText(source.anchorTime) || DEFAULT_SETTINGS.shiftCalendar.anchorTime,
+    items: items.length ? items : DEFAULT_SHIFT_CALENDAR_ITEMS.map((item, index) => normalizeShiftCalendarItem(item, index))
+  };
+}
+
+function normalizeShiftCalendarItem(item = {}, index = 0) {
+  const fallback = DEFAULT_SHIFT_CALENDAR_ITEMS[index % DEFAULT_SHIFT_CALENDAR_ITEMS.length];
+  const kind = Object.values(SHIFT_CALENDAR_KINDS).includes(item.kind) ? item.kind : fallback.kind;
+  const isRestLike = kind === SHIFT_CALENDAR_KINDS.REST || kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT;
+  return {
+    id: item.id || `cycle-${index + 1}`,
+    name: String(item.name || fallback.name || `第${index + 1}天`).trim().slice(0, 18) || `第${index + 1}天`,
+    startTime: isRestLike ? "" : (normalizeTimeText(item.startTime) || fallback.startTime || "09:00"),
+    endTime: isRestLike ? "" : (normalizeTimeText(item.endTime) || fallback.endTime || "18:00"),
+    kind
+  };
+}
+
+function normalizeTimeText(value) {
+  const text = String(value || "");
+  return /^\d{2}:\d{2}$/.test(text) ? text : "";
 }
 
 function inferPresetDayType(preset = {}) {
@@ -965,6 +1064,69 @@ export function buildCalendarDays(year, monthIndex, weekStart = 1) {
   }
 
   return cells;
+}
+
+export function buildShiftCalendarDays(year, monthIndex, settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  return buildCalendarDays(year, monthIndex, merged.weekStart).map((day) => ({
+    ...day,
+    shift: shiftCycleForDate(day.date, merged)
+  }));
+}
+
+export function shiftCycleForDate(date, settings = DEFAULT_SETTINGS) {
+  const merged = mergeSettings(settings);
+  const config = normalizeShiftCalendar(merged.shiftCalendar);
+  const dateText = isValidDateString(String(date || "")) ? String(date) : formatDate(new Date());
+  if (!config.enabled || !config.items.length) {
+    return {
+      enabled: false,
+      date: dateText,
+      config,
+      item: null,
+      index: -1,
+      cycleDay: 0,
+      cycleLength: config.items.length,
+      cycleNumber: 0,
+      daysFromAnchor: 0,
+      nextChangeDate: "",
+      nextRestDate: "",
+      nextRestItem: null
+    };
+  }
+
+  const daysFromAnchor = daysBetween(config.anchorDate, dateText);
+  const index = positiveModulo(daysFromAnchor, config.items.length);
+  const item = config.items[index];
+  const cycleNumber = daysFromAnchor >= 0
+    ? Math.floor(daysFromAnchor / config.items.length) + 1
+    : Math.floor(daysFromAnchor / config.items.length);
+  const nextRest = findNextShiftByKind(dateText, config, SHIFT_CALENDAR_KINDS.REST);
+  return {
+    enabled: true,
+    date: dateText,
+    config,
+    item,
+    index,
+    cycleDay: index + 1,
+    cycleLength: config.items.length,
+    cycleNumber,
+    daysFromAnchor,
+    nextChangeDate: addDays(dateText, 1),
+    nextRestDate: nextRest.date,
+    nextRestItem: nextRest.item
+  };
+}
+
+function findNextShiftByKind(date, config, kind) {
+  if (!config.items.some((item) => item.kind === kind)) return { date: "", item: null };
+  for (let offset = 0; offset <= config.items.length * 2; offset += 1) {
+    const candidateDate = addDays(date, offset);
+    const index = positiveModulo(daysBetween(config.anchorDate, candidateDate), config.items.length);
+    const item = config.items[index];
+    if (item.kind === kind) return { date: candidateDate, item };
+  }
+  return { date: "", item: null };
 }
 
 export function formatDate(date) {

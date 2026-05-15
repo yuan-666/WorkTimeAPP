@@ -18,6 +18,86 @@
 - 后续建议：
 ```
 
+## 2026-05-15 13:53 CST - v0.3.9 倒班云同步与结束倒计时
+
+- 触发原因：用户要求倒班记录也参与云同步，并把倒班页底部无意义的轮次展示改为距本次班次结束还有多久；同时要求增加工时班次时间复用选项、再次检查接口和界面，并推送 GitHub。
+- 修改文件：`src/app.js`、`src/calculations.js`、`functions/index.js`、`tests/functions.test.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 云备份快照升级为 `version: 3`，显式保存 `shiftCalendar`，同时保留 `settings.shiftCalendar`；恢复时优先读取独立倒班快照并兼容旧结构。
+  - 后端 `sanitizeData` 会清洗倒班日历字段，保留开启状态、日历名、班组名、锚点日期、周期开始时间和最多 31 天轮班规则；下夜班/休班会清空上下班时间。
+  - 管理员用户摘要新增倒班开启状态和周期长度，并兼容旧备份中只存在 `settings.shiftCalendar` 的用户。
+  - 倒班页详情区不再展示“轮次”，改为“本次结束”和“距本次结束”；正在上班时显示剩余时长，未开始时显示结束时间，已结束时显示已结束。
+  - 倒班规则新增“周期开始时间”；今日班次会结合锚点时间判断当前属于哪一天的周期。
+  - 倒班周期行新增“复用时间”下拉框，可套用工时班次模板里的上下班时间；复用夜班时间时会自动把休班/下夜班行转成上夜班或白班。
+  - 函数测试请求改用递增的测试 IP 头，避免生产限流逻辑在同一测试进程中被前置用例误触发。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/serve.mjs` 均通过；`npm test` 50 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地浏览器访问 `http://127.0.0.1:52730/index.html?fresh=v0.3.9-final`，在 756px 宽度扫描月历、倒班、记录、报表、设置 5 个主页面均无页面级横向溢出、无控制台错误；倒班页无“轮次/当前轮次”文案，显示“本次结束/距本次结束”；设置页能检测到 `shiftCalendar.anchorTime` 和 4 个 `reusePresetId` 复用时间选择器。
+- 风险/注意：浏览器验证基于当前 in-app browser 的 756px 宽度，已覆盖窄桌面和平板类问题；更小真机宽度仍建议部署后在 iOS/Android WebView 上手动滑动检查原生时间选择器。
+- 后续建议：如果后续要把倒班规则“一键生成工时记录”，需要先明确下夜班是否计薪、跨日夜班归属和休班工资处理，避免把排班展示与工资登记混在一起。
+
+## 2026-05-15 13:28 CST - v0.3.9 发布整理与推送准备
+
+- 触发原因：用户确认当前效果没什么问题，要求再次检测，并把所有描述文件和版本文件写好后推送到 GitHub。
+- 修改文件：`package.json`、`index.html`、`src/app.js`、`sw.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 应用版本从 `v0.3.7` 提升到 `v0.3.9`，`APP_VERSION`、`package.json`、入口资源参数、Service Worker 注册参数和 README 当前版本同步更新。
+  - Service Worker 缓存名从 `worktimeapp-v30` 提升到 `worktimeapp-v32`，降低线上和 PWA 安装端继续读取旧资源的概率。
+  - `CHANGELOG.md` 新增 `v0.3.9` 条目，`RELEASE_NOTES.md` 改为本次窄桌面溢出修复和倒班稳定版发布说明。
+  - `changelog.html` 时间轴新增 `v0.3.9` 条目，并重新编号时间线索引。
+- 验证结果：`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/serve.mjs` 均通过；`npm test` 49 项通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地浏览器在 756px 宽度复测月历、报表、记录、设置和倒班页，页面版本均显示 `v0.3.9`，未发现页面级横向溢出。
+- 风险/注意：这是在 `v0.3.7` 倒班功能和本轮溢出修复基础上的发布整理；推送前需要确认本地 `main` 与 `origin/main` 没有分叉。
+- 后续建议：推送后在 GitHub Release 使用 `v0.3.9` 标签和 `RELEASE_NOTES.md` 内容；ESA Pages 若仍显示旧版本，需要检查缓存刷新和 Pages 输出目录 `dist`。
+
+## 2026-05-15 13:05 CST - 窄桌面溢出修复
+
+- 触发原因：用户反馈电脑版横向空间稍微缩小后很多地方会溢出，特别是报表数字、日期填写和整体表单区域，需要全面检查并修好。
+- 修改文件：`styles.css`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 720-1120px 的窄桌面/平板宽度提前切换为更稳的单列主布局，报表、记录、倒班和设置页不再等到 720px 以下才收敛。
+  - 本月指标卡从固定 4 列改为响应式列宽，并缩小窄桌面数字字号；金额、工时和目标数字增加 `tabular-nums`、换行和溢出保护。
+  - 年度总结条、薪资拆分、饼图图例、记录筛选日期框、工资规则行、倒班周期设置、云备份卡片和管理员看板增加 `min-width: 0`、省略和折行规则，避免表单/数字撑破容器。
+  - 页面切换入场动画从横向位移改为轻微纵向位移，避免切页瞬间产生横向滚动条闪动。
+  - 隐藏的文件导入 input 收敛到按钮尺寸，避免设置页被不可见控件撑宽。
+- 验证结果：`npm test` 49 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地浏览器在 756px 宽度扫描月历、报表、记录、设置和倒班页，`documentElement.scrollWidth` 均等于 `clientWidth`，未发现页面级横向溢出。
+- 风险/注意：当前自动浏览器宽度为 756px，已覆盖用户反馈的窄桌面症状；更宽的 900-1100px 主要依赖同一 `@media (max-width: 1120px)` 规则，后续如果能接入可控 viewport 的端到端工具，可以补固定宽度截图回归。
+- 后续建议：下次 UI 迭代优先补一个响应式回归脚本，覆盖 390px、756px、900px、1120px 和 1280px 的主页面 `scrollWidth` 检查。
+
+## 2026-05-15 12:14 CST - 倒班功能开关与手机端收敛
+
+- 触发原因：用户反馈倒班应该由用户决定是否开启；不开启时要把倒班整体隐藏，并要求班次设置贴近倒班助手的白班、上夜班、下夜班、休班模型，同时继续优化手机访问质量。
+- 修改文件：`src/calculations.js`、`src/app.js`、`styles.css`、`tests/calculations.test.js`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 设置页新增“功能开关”分组；倒班未开启时只显示总开关，主导航、底部导航、倒班页面和倒班详细设置全部隐藏。
+  - 倒班默认周期改为白班、上夜班、下夜班、休班四段；类型选择收敛为这四类，但每一段班次名称仍可由用户自行填写。
+  - 下夜班默认不要求填写上下班时间，展示为“夜班后休息”，避免把下夜班误当成新的工作时段。
+  - 手机端倒班日历进一步压缩日期格，隐藏小号时间文本，底部导航改成自适应网格，减少 5 个入口时的挤压。
+- 验证结果：`npm test` 49 项通过；`node --check src/app.js`、`src/calculations.js`、`scripts/serve.mjs` 通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地浏览器验证倒班未开启时导航隐藏、开启后显示 4 天周期、倒班页无横向溢出，点击倒班日期不会弹出工时登记抽屉。
+- 风险/注意：倒班仍只负责排班展示，不自动生成工资记录；如后续做“一键按倒班补登工时”，需要明确下夜班是否计薪和跨日归属。
+- 后续建议：可以继续补两班倒、三班倒、上二休二等模板按钮，让用户不用手动增加周期行。
+
+## 2026-05-15 11:44 CST - 本地预览端口可配置
+
+- 触发原因：用户要求重新开一个预览，并把端口写开一点，避免和之前的 `4173` 预览冲突。
+- 修改文件：`scripts/serve.mjs`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：`scripts/serve.mjs` 从固定 `4173` 改为读取 `PORT` 环境变量；默认仍是 `4173`，需要避开旧端口时可运行 `PORT=52730 npm run serve`。
+- 验证结果：旧预览会话已停止，后续使用新端口启动并访问验证。
+- 风险/注意：这是本地开发体验改动，不影响生产构建、ESA 函数入口或云同步接口。
+- 后续建议：如果后续经常多开预览，可在 README 的运行说明里补充常用备用端口。
+
+## 2026-05-15 11:20 CST - v0.3.7 倒班日历与轮班周期
+
+- 触发原因：用户提供“倒班助手”截图，要求基于样例增加独立倒班日历，支持按需开启/关闭、轮班规则、当前周期计数和多功能协同。
+- 修改文件：`src/calculations.js`、`src/app.js`、`styles.css`、`tests/calculations.test.js`、`package.json`、`sw.js`、`index.html`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 新增 `shiftCalendar` 设置，默认关闭；开启后主导航出现“倒班”，关闭后隐藏，避免打扰普通工时用户。
+  - 新增倒班周期计算：按周期第 1 天日期作为锚点，自动推算任意日期的班次、周期第几天、当前第几轮和下个休班。
+  - 设置页新增“倒班日历”分组，可编辑日历名称、班组名称、锚点日期、周期每一天的班次名称、类型和时间。
+  - 新增独立倒班页，展示今日班次、本轮进度、下个休班、月历格子和当月班次统计；手机端点击日期只查看班次，不再误弹出工时登记抽屉。
+  - 倒班规则与工时登记模板分离：倒班页负责排班展示，月历页仍负责工资与工时登记，降低概念混乱。
+  - 版本提升到 `v0.3.7`，Service Worker 缓存名提升到 `worktimeapp-v30`。
+- 验证结果：新增倒班计算测试；当前 `npm test` 47 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js` 均通过；`npm run build` 成功输出 `dist/`；`git diff --check` 通过；本地浏览器验证桌面倒班页、手机 390px 倒班页和点击倒班日期不弹出工时登记抽屉。
+- 风险/注意：倒班日历当前只做排班推算与展示，尚未自动把倒班规则转换成工资登记；如果后续要“一键按班次登记”，需要明确夜班跨日工资归属。
+- 后续建议：用真机检查倒班设置的原生时间选择器和下拉选择器；后续可增加规则模板（两班倒、三班倒、上四休二等）和按班次快捷登记。
+
 ## 2026-05-14 18:00 CST - v0.3.6 日历翻页滑动动画
 
 - 触发原因：用户反馈日历翻页没有动画，体验生硬。

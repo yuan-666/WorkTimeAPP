@@ -3,11 +3,13 @@ import {
   RECORD_MODES,
   REST_CYCLE_MODES,
   SALARY_MODES,
+  SHIFT_CALENDAR_KINDS,
   WORK_LIMITS,
   buildCalendarDays,
   buildBaseWorkEntry,
   buildEntryFromShiftPreset,
   buildOvertimeEntry,
+  buildShiftCalendarDays,
   calculateCumulativeTaxForMonth,
   calculateEntryPay,
   calculateMonthlyPayroll,
@@ -24,27 +26,29 @@ import {
   mergeSettings,
   monthIndexFromDate,
   normalizeEntry,
+  normalizeShiftCalendar,
   overtimeMultiplierForDay,
   parseTimeToMinutes,
   round2,
+  shiftCycleForDate,
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.3.6";
+} from "./calculations.js?v=0.3.9";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.3.6";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.6";
+} from "./storage.js?v=0.3.9";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.9";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.3.6";
-const RELEASE_COUNT = 21;
+const APP_VERSION = "v0.3.9";
+const RELEASE_COUNT = 23;
 const CLOUD_API_BASE = "/api/cloud";
 const CLOUD_SESSION_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 let state = loadState();
@@ -141,7 +145,7 @@ document.addEventListener("click", async (event) => {
     ui.entryAdvanced = false;
     ui.entryIntent = "";
     ui.entryError = "";
-    if (isMobileViewport() && target.closest(".calendar-panel, .unlogged-panel")) {
+    if (ui.view === "calendar" && isMobileViewport() && target.closest(".calendar-panel, .unlogged-panel")) {
       openEntrySheet();
     } else {
       render();
@@ -284,6 +288,21 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "open-shift-settings") {
+    openShiftSettings();
+    return;
+  }
+
+  if (action === "shift-cycle-add") {
+    updateShiftCycleRows(target, "add");
+    return;
+  }
+
+  if (action === "shift-cycle-remove") {
+    updateShiftCycleRows(target, "remove");
+    return;
+  }
+
   if (action === "toggle-entry-advanced") {
     ui.entryAdvanced = !ui.entryAdvanced;
     render();
@@ -382,7 +401,7 @@ document.addEventListener("touchstart", (e) => {
   touchStartX = e.touches[0].clientX;
 }, { passive: true });
 document.addEventListener("touchend", (e) => {
-  if (ui.view !== "calendar" || !isMobileViewport() || ui.entrySheetOpen) return;
+  if (!["calendar", "shift"].includes(ui.view) || !isMobileViewport() || ui.entrySheetOpen) return;
   const dx = e.changedTouches[0].clientX - touchStartX;
   if (Math.abs(dx) < 60) return;
   const delta = dx > 0 ? -1 : 1;
@@ -470,6 +489,10 @@ document.addEventListener("change", async (event) => {
 
   const settingsForm = event.target.closest("#settings-form, .settings-detail-form");
   if (settingsForm) {
+    if (/^shiftCalendar\.items\.\d+\.reusePresetId$/.test(event.target.name || "")) {
+      applyPresetTimeToShiftCycle(settingsForm, event.target);
+      return;
+    }
     if (event.target.name === "tax.otherDeductionMode") {
       settingsForm.dataset.taxOtherMode = event.target.value;
     }
@@ -536,7 +559,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.6", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.9", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -547,7 +570,7 @@ if ("serviceWorker" in navigator) {
 function render() {
   state.settings = limitSettings(state.settings);
   applyTheme();
-  if (!["calendar", "records", "reports", "settings"].includes(ui.view)) {
+  if (!availableViews().includes(ui.view)) {
     ui.view = "calendar";
     state.activeView = ui.view;
     saveState(state);
@@ -566,6 +589,7 @@ function render() {
         ${ui.view === "calendar" && !isMobileViewport() ? renderCalendarRestReminder() : ""}
         ${ui.notice ? `<p class="notice" role="status">${escapeHtml(ui.notice)}${ui.lastDeleted ? ` <button type="button" data-action="undo-delete">撤销</button>` : ""}</p>` : ""}
         ${ui.view === "calendar" ? renderCalendarView() : ""}
+        ${ui.view === "shift" ? renderShiftCalendarView() : ""}
         ${ui.view === "records" ? renderRecordsView() : ""}
         ${ui.view === "reports" ? renderReportsView() : ""}
         ${ui.view === "settings" ? renderSettingsView() : ""}
@@ -576,6 +600,12 @@ function render() {
   ui.pageTransition = false;
   syncEntrySheetState();
   updateEntryPreview();
+}
+
+function availableViews() {
+  const views = ["calendar", "records", "reports", "settings"];
+  if (state.settings?.shiftCalendar?.enabled) views.splice(1, 0, "shift");
+  return views;
 }
 
 function shouldShowSetupWizard() {
@@ -693,6 +723,7 @@ function renderSidebar() {
       </div>
       <nav class="nav">
         ${navButton("calendar", "月历")}
+        ${state.settings.shiftCalendar.enabled ? navButton("shift", "倒班") : ""}
         ${navButton("records", "记录")}
         ${navButton("reports", "报表")}
         ${navButton("settings", "设置")}
@@ -703,7 +734,7 @@ function renderSidebar() {
 }
 
 function renderMobileNav() {
-  const mainViews = ["calendar", "records", "reports", "settings"];
+  const mainViews = availableViews();
   const isSubPage = !mainViews.includes(ui.view);
   if (isSubPage) {
     return `
@@ -724,6 +755,7 @@ function renderMobileNav() {
       <nav class="mobile-nav" aria-label="底部导航">
         <div class="mobile-nav-row">
           ${navButton("calendar", "月历")}
+          ${state.settings.shiftCalendar.enabled ? navButton("shift", "倒班") : ""}
           ${navButton("records", "记录")}
           ${navButton("reports", "报表")}
           ${navButton("settings", "设置")}
@@ -750,6 +782,7 @@ function renderTopbar() {
   const monthlyGoal = Number(state.settings.goals.monthlyIncome || 0);
   const goalDelta = monthlyGoal - (payroll.grossBeforeTax - tax.currentTax);
   const isCalendarMobile = ui.view === "calendar" && isMobileViewport();
+  const hasMonthControls = ui.view === "calendar" || ui.view === "shift";
 
   if (isCalendarMobile) {
     return renderMobileCalendarTopbar(payroll, goalDelta, monthlyGoal);
@@ -761,7 +794,7 @@ function renderTopbar() {
         <p class="eyebrow">${ui.year} 年 ${MONTHS[ui.monthIndex]}</p>
         <h1>${ui.viewTitle || viewTitle(ui.view)}</h1>
       </div>
-      ${ui.view === "calendar" ? `
+      ${hasMonthControls ? `
       <div class="month-controls" aria-label="月份切换">
         <button class="plain-button theme-button" type="button" data-action="toggle-theme" title="${themeModeLabel(state.settings.themeMode)}">${themeIcon(state.settings.themeMode)}</button>
         <button class="icon-button" type="button" data-action="prev-month" aria-label="上个月">‹</button>
@@ -970,6 +1003,248 @@ function renderCalendarView() {
       </section>
     </div>
   `;
+}
+
+function renderShiftCalendarView() {
+  const config = normalizeShiftCalendar(state.settings.shiftCalendar);
+  if (!config.enabled) {
+    return `
+      <div class="workspace">
+        <section class="detail-panel shift-empty-state">
+          <div>
+            <p class="eyebrow">倒班日历</p>
+            <h2>开启后自动生成轮班月历</h2>
+            <p>设置周期第 1 天对应的日期，再填写每一天的班次，系统会按规则向前向后推算。</p>
+          </div>
+          <button class="primary-button" type="button" data-action="open-shift-settings">去设置倒班规则</button>
+        </section>
+      </div>
+    `;
+  }
+
+  const days = buildShiftCalendarDays(ui.year, ui.monthIndex, state.settings);
+  const todayShift = shiftCycleForCurrentTime(state.settings);
+  const selectedShift = shiftCycleForDate(ui.selectedDate, state.settings);
+  const stats = shiftMonthStats(days);
+  const progressPercent = todayShift.cycleLength ? Math.round(todayShift.cycleDay / todayShift.cycleLength * 100) : 0;
+  const selectedEndText = shiftEndCountdownText(selectedShift);
+  return `
+    <div class="workspace shift-layout">
+      <section class="shift-hero">
+        <div class="shift-hero-main ${shiftKindClass(todayShift.item)}">
+          <span>${escapeHtml(config.teamName)}</span>
+          <strong>${todayShift.item ? escapeHtml(todayShift.item.name) : "未排班"}</strong>
+          <small>${selectedDateLabel(today)} · ${shiftTimeText(todayShift.item)}</small>
+        </div>
+        <div class="shift-cycle-meter">
+          <span>本轮进度</span>
+          <strong>${todayShift.cycleDay}/${todayShift.cycleLength}</strong>
+          <i class="shift-progress-rail"><b style="width:${Math.max(4, Math.min(100, progressPercent))}%"></b></i>
+          <small>${shiftEndCountdownText(todayShift)}</small>
+        </div>
+        <div class="shift-next-rest">
+          <span>下个休班</span>
+          <strong>${todayShift.nextRestDate ? todayShift.nextRestDate.slice(5).replace("-", "/") : "未设置"}</strong>
+          <small>${todayShift.nextRestItem ? escapeHtml(todayShift.nextRestItem.name) : "周期里没有休班"}</small>
+        </div>
+      </section>
+
+      <section class="calendar-panel shift-calendar-panel ${ui.calendarTransition || ""}" aria-label="倒班日历">
+        <div class="shift-panel-head">
+          <div>
+            <p class="eyebrow">${escapeHtml(config.name)}</p>
+            <h2>${ui.year}年${MONTHS[ui.monthIndex]}</h2>
+          </div>
+          <button class="plain-button" type="button" data-action="open-shift-settings">规则</button>
+        </div>
+        <div class="weekday-grid shift-weekdays">
+          ${weekdayOrder(state.settings.weekStart).map((day) => `<span>${weekLabelByIndex(day)}</span>`).join("")}
+        </div>
+        <div class="shift-calendar-grid">
+          ${days.map((day) => renderShiftDayCell(day)).join("")}
+        </div>
+      </section>
+
+      <section class="detail-panel shift-detail-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">${selectedDateLabel(ui.selectedDate)}</p>
+            <h2>${selectedShift.item ? escapeHtml(selectedShift.item.name) : "未排班"}</h2>
+          </div>
+          <span class="shift-kind-pill ${shiftKindClass(selectedShift.item)}">${escapeHtml(shiftKindLabel(selectedShift.item))}</span>
+        </div>
+        <div class="shift-detail-grid">
+          ${summaryLine("时间", shiftTimeText(selectedShift.item), true)}
+          ${summaryLine("本次结束", shiftEndTimeText(selectedShift), true)}
+          ${summaryLine("距本次结束", selectedEndText, true)}
+          ${summaryLine("锚点", `${config.anchorDate} ${config.anchorTime}`, true)}
+        </div>
+        <div class="shift-stat-list">
+          ${stats.map((item) => `
+            <div>
+              <span>${escapeHtml(item.name)}</span>
+              <i><b style="width:${item.percent}%"></b></i>
+              <strong>${item.count}天</strong>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderShiftDayCell(day) {
+  const shift = day.shift;
+  const item = shift.item;
+  const holiday = day.holiday || getHolidayInfo(day.date);
+  const isSelected = day.date === ui.selectedDate;
+  const isToday = day.date === today;
+  const classes = [
+    "shift-day-cell",
+    day.inMonth ? "" : "is-muted",
+    isSelected ? "is-selected" : "",
+    isToday ? "is-today" : "",
+    item ? shiftKindClass(item) : "",
+    holiday?.adjusted ? "is-adjusted" : ""
+  ].filter(Boolean).join(" ");
+  const ariaParts = [
+    selectedDateLabel(day.date),
+    item?.name ? `班次 ${item.name}` : "",
+    shiftTimeText(item),
+    `周期第 ${shift.cycleDay}/${shift.cycleLength} 天`
+  ].filter(Boolean).join("，");
+  return `
+    <button class="${classes}" type="button" data-date="${day.date}" aria-label="${escapeAttr(ariaParts)}" title="${escapeAttr(ariaParts)}">
+      <span class="shift-day-top">
+        <b>${Number(day.date.slice(8, 10))}</b>
+        ${holiday?.marker ? `<em>${escapeHtml(holiday.marker)}</em>` : ""}
+      </span>
+      <strong>${item ? escapeHtml(item.name) : ""}</strong>
+      <small>${shiftTimeText(item)}</small>
+    </button>
+  `;
+}
+
+function shiftMonthStats(days) {
+  const inMonth = days.filter((day) => day.inMonth && day.shift?.item);
+  const total = Math.max(1, inMonth.length);
+  const map = new Map();
+  for (const day of inMonth) {
+    const name = day.shift.item.name;
+    map.set(name, (map.get(name) || 0) + 1);
+  }
+  return [...map.entries()].map(([name, count]) => ({
+    name,
+    count,
+    percent: Math.round(count / total * 100)
+  }));
+}
+
+function shiftCycleForCurrentTime(settings = state.settings, reference = new Date()) {
+  const config = normalizeShiftCalendar(settings.shiftCalendar);
+  const todayText = formatDate(reference);
+  const yesterdayText = addDaysText(todayText, -1);
+  const candidates = [yesterdayText, todayText].map((date) => shiftCycleForDate(date, settings));
+  const active = candidates.find((shift) => isShiftActiveAt(shift, reference));
+  if (active) return active;
+  const currentDate = currentShiftCycleDate(reference, config);
+  return shiftCycleForDate(currentDate, settings);
+}
+
+function currentShiftCycleDate(reference, config) {
+  const dateText = formatDate(reference);
+  const anchorMinutes = parseTimeToMinutes(config.anchorTime || "00:00");
+  const currentMinutes = reference.getHours() * 60 + reference.getMinutes();
+  return currentMinutes < anchorMinutes ? addDaysText(dateText, -1) : dateText;
+}
+
+function isShiftActiveAt(shift, reference) {
+  const range = shiftDateTimeRange(shift);
+  if (!range) return false;
+  const time = reference.getTime();
+  return time >= range.start.getTime() && time < range.end.getTime();
+}
+
+function shiftEndCountdownText(shift, reference = new Date()) {
+  const item = shift?.item;
+  if (!item) return "未排班";
+  if (item.kind === SHIFT_CALENDAR_KINDS.REST) return "休班中";
+  if (item.kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT && !item.startTime && !item.endTime) return "下夜班休息中";
+  const range = shiftDateTimeRange(shift);
+  if (!range) return "未设置结束时间";
+  const time = reference.getTime();
+  if (time < range.start.getTime()) return `未开始 · ${formatDateTimeShort(range.end)}结束`;
+  if (time >= range.end.getTime()) return "已结束";
+  return `还有 ${durationText(range.end.getTime() - time)}`;
+}
+
+function shiftEndTimeText(shift) {
+  const item = shift?.item;
+  if (!item) return "未排班";
+  if (item.kind === SHIFT_CALENDAR_KINDS.REST) return "休班";
+  if (item.kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT && !item.startTime && !item.endTime) return "夜班后休息";
+  const range = shiftDateTimeRange(shift);
+  return range ? `${formatDateTimeShort(range.end)}结束` : "未设置结束时间";
+}
+
+function shiftDateTimeRange(shift) {
+  const item = shift?.item;
+  if (!shift?.date || !item?.startTime || !item?.endTime) return null;
+  const startMinutes = parseTimeToMinutes(item.startTime);
+  const endMinutes = parseTimeToMinutes(item.endTime);
+  if (startMinutes < 0 || endMinutes < 0) return null;
+  const start = new Date(`${shift.date}T00:00:00`);
+  start.setMinutes(startMinutes);
+  const end = new Date(`${shift.date}T00:00:00`);
+  end.setMinutes(endMinutes);
+  if (end <= start) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function durationText(ms) {
+  const minutes = Math.max(0, Math.ceil(ms / 60000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days > 0) return `${days}天${hours ? `${hours}小时` : ""}`;
+  if (hours > 0) return `${hours}小时${mins ? `${mins}分` : ""}`;
+  return `${mins}分`;
+}
+
+function formatDateTimeShort(value) {
+  const date = formatDate(value);
+  const time = `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+  return date === today ? time : `${date.slice(5).replace("-", "/")} ${time}`;
+}
+
+function addDaysText(date, delta) {
+  const parsed = new Date(`${date}T00:00:00`);
+  parsed.setDate(parsed.getDate() + delta);
+  return formatDate(parsed);
+}
+
+function shiftTimeText(item) {
+  if (!item) return "未设置";
+  if (item.kind === SHIFT_CALENDAR_KINDS.REST) return "休息";
+  if (item.kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT && !item.startTime && !item.endTime) return "夜班后休息";
+  if (!item.startTime || !item.endTime) return "未设置时间";
+  return `${item.startTime}-${item.endTime}`;
+}
+
+function shiftKindLabel(item) {
+  if (!item) return "未排班";
+  return ({
+    [SHIFT_CALENDAR_KINDS.DAY]: "白班",
+    [SHIFT_CALENDAR_KINDS.NIGHT]: "上夜班",
+    [SHIFT_CALENDAR_KINDS.REST]: "休班",
+    [SHIFT_CALENDAR_KINDS.OFF_NIGHT]: "下夜班",
+    [SHIFT_CALENDAR_KINDS.CUSTOM]: "自定义"
+  })[item.kind] || "自定义";
+}
+
+function shiftKindClass(item) {
+  if (!item) return "";
+  return `is-shift-${item.kind}`;
 }
 
 function renderCalendarListView(days, entriesByDate, adjustmentsByDate, expanded = true) {
@@ -1916,6 +2191,94 @@ function openCloudSettings() {
   });
 }
 
+function openShiftSettings() {
+  ui.pageTransition = ui.view !== "settings";
+  ui.view = "settings";
+  ui.settingsSheetOpen = state.settings?.shiftCalendar?.enabled ? "shiftCalendar" : "features";
+  ui.entrySheetOpen = false;
+  ui.entrySheetVisible = false;
+  state.activeView = "settings";
+  persist();
+  render();
+}
+
+function updateShiftCycleRows(target, intent) {
+  const form = target.closest("#settings-form, .settings-detail-form") || document.querySelector("#settings-form, .settings-detail-form");
+  const draft = form ? settingsFromForm(form) : { settings: mergeSettings(state.settings), cloud: state.cloud };
+  const config = normalizeShiftCalendar(draft.settings.shiftCalendar);
+  if (intent === "add") {
+    const index = config.items.length;
+    const templates = [
+      { name: "白班", startTime: "09:00", endTime: "18:00", kind: SHIFT_CALENDAR_KINDS.DAY },
+      { name: "上夜班", startTime: "22:00", endTime: "06:00", kind: SHIFT_CALENDAR_KINDS.NIGHT },
+      { name: "下夜班", startTime: "", endTime: "", kind: SHIFT_CALENDAR_KINDS.OFF_NIGHT },
+      { name: "休班", startTime: "", endTime: "", kind: SHIFT_CALENDAR_KINDS.REST }
+    ];
+    const template = templates[index % templates.length];
+    config.items.push({
+      id: `cycle-${Date.now().toString(36)}-${index + 1}`,
+      ...template
+    });
+  }
+  if (intent === "remove") {
+    const index = Number(target.dataset.index);
+    if (config.items.length > 1 && Number.isInteger(index)) {
+      config.items.splice(index, 1);
+    }
+  }
+  state.settings = limitSettings({
+    ...draft.settings,
+    shiftCalendar: config
+  });
+  state.cloud = draft.cloud;
+  ui.settingsSheetOpen = "shiftCalendar";
+  render();
+}
+
+function applyPresetTimeToShiftCycle(form, target) {
+  const match = String(target.name || "").match(/^shiftCalendar\.items\.(\d+)\.reusePresetId$/);
+  const presetId = String(target.value || "");
+  if (!match || !presetId) return;
+  const index = Number(match[1]);
+  const draft = settingsFromForm(form);
+  const preset = (draft.settings.shiftPresets || []).find((item) => item.id === presetId);
+  if (!preset || preset.recordMode !== RECORD_MODES.TIME || !preset.startTime || !preset.endTime) {
+    persist("这个工时班次没有可复用的上下班时间");
+    return;
+  }
+  const config = normalizeShiftCalendar(draft.settings.shiftCalendar);
+  const item = config.items[index];
+  if (!item) return;
+  item.startTime = preset.startTime;
+  item.endTime = preset.endTime;
+  if (item.kind === SHIFT_CALENDAR_KINDS.REST || item.kind === SHIFT_CALENDAR_KINDS.OFF_NIGHT) {
+    item.kind = isOvernightTime(preset.startTime, preset.endTime) ? SHIFT_CALENDAR_KINDS.NIGHT : SHIFT_CALENDAR_KINDS.DAY;
+  }
+  state.settings = limitSettings({
+    ...draft.settings,
+    shiftCalendar: config
+  });
+  state.cloud = draft.cloud;
+  ui.settingsSheetOpen = "shiftCalendar";
+  persist("已复用工时班次时间");
+  render();
+}
+
+function shiftPresetTimeOptions() {
+  return (state.settings.shiftPresets || [])
+    .filter((preset) => preset.recordMode === RECORD_MODES.TIME && preset.startTime && preset.endTime)
+    .map((preset) => ({
+      id: preset.id,
+      label: `${preset.name} ${preset.startTime}-${preset.endTime}`
+    }));
+}
+
+function isOvernightTime(startTime, endTime) {
+  const start = parseTimeToMinutes(startTime);
+  const end = parseTimeToMinutes(endTime);
+  return start >= 0 && end >= 0 && end <= start;
+}
+
 function cloudAccountStatus() {
   const cloud = state.cloud || {};
   if (isCloudSessionValid(cloud) && cloud.userId) {
@@ -1941,15 +2304,18 @@ function cloudAccountStatus() {
 
 function renderSettingsView() {
   const settings = state.settings;
+  const shiftCalendar = normalizeShiftCalendar(settings.shiftCalendar);
   const insights = deriveSalaryInsights(settings);
   const modeFields = settingsFieldsForMode(settings.salaryMode);
   const isMobile = isMobileViewport();
-  const sheetGroup = ui.settingsSheetOpen;
+  let sheetGroup = ui.settingsSheetOpen;
   const settingsGroups = [
     { id: "salary", title: "薪资方式与时薪", summary: MODE_LABELS[settings.salaryMode], open: true },
     { id: "overtime", title: "加班倍率", summary: `工作日 ${settings.overtimeMultiplier}x / 休息日 ${settings.restDayMultiplier}x / 节假日 ${settings.holidayMultiplier}x`, open: true },
     { id: "goals", title: "目标", summary: `月收入 ${money(settings.goals.monthlyIncome)} / 月工时 ${settings.goals.monthlyHours}h`, open: false },
     { id: "shifts", title: "班次管理", summary: `${settings.shiftPresets.length} 个班次模板`, open: false },
+    { id: "features", title: "功能开关", summary: shiftCalendar.enabled ? "倒班日历已开启" : "标准工时模式", open: false },
+    ...(shiftCalendar.enabled ? [{ id: "shiftCalendar", title: "倒班日历", summary: `${shiftCalendar.teamName} · ${shiftCalendar.items.length} 天周期`, open: false }] : []),
     { id: "workdays", title: "工作日与假期", summary: `${restCycleLabel(settings.restCycle.mode)} · 周${weekLabelByIndex(settings.weekStart)}开周`, open: false },
     { id: "adjustment", title: "自动补扣", summary: settings.autoAdjustment.enabled ? `已开启 ${money(settings.autoAdjustment.amount)}/天` : "未开启", open: false },
     { id: "tax", title: "个税设置", summary: "累计预扣法", open: false },
@@ -1957,6 +2323,10 @@ function renderSettingsView() {
     { id: "data", title: "数据管理", summary: state.cloud?.lastSyncAt ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}` : "本地备份与云同步", open: false },
     { id: "about", title: "关于", summary: `明薪工时 ${APP_VERSION}`, open: false }
   ];
+  if (sheetGroup && !settingsGroups.some((group) => group.id === sheetGroup)) {
+    sheetGroup = "";
+    ui.settingsSheetOpen = "";
+  }
 
   const salaryBody = `
     <div class="settings-group-body">
@@ -2023,6 +2393,29 @@ function renderSettingsView() {
       </div>
       <small class="helper">选择上班方式会同步生成班次模板</small>
     </div>`;
+
+  const featuresBody = `
+    <div class="settings-group-body feature-switch-body">
+      <label class="feature-switch-card">
+        <input type="checkbox" name="shiftCalendar.enabled" value="true" ${shiftCalendar.enabled ? "checked" : ""}>
+        <span>
+          <strong>倒班日历</strong>
+          <small>${shiftCalendar.enabled ? "已在主导航显示，可进入独立倒班页查看轮班。" : "关闭时隐藏倒班导航、倒班页面和规则设置。"}</small>
+        </span>
+      </label>
+      ${shiftCalendar.enabled ? `
+        <div class="feature-action-card">
+          <div>
+            <span>当前规则</span>
+            <strong>${escapeHtml(shiftCalendar.teamName)} · ${shiftCalendar.items.length} 天周期</strong>
+            <small>白班、上夜班、下夜班、休班会按周期第 1 天循环推算。</small>
+          </div>
+          <button class="plain-button" type="button" data-action="open-shift-settings">编辑规则</button>
+        </div>
+      ` : ""}
+    </div>`;
+
+  const shiftCalendarBody = renderShiftCalendarSettings(shiftCalendar);
 
   const workdaysBody = `
     <div class="settings-group-body">
@@ -2134,7 +2527,7 @@ function renderSettingsView() {
       <p class="about-copyright">© ${new Date().getFullYear()} yuan 版权所有</p>
     </div>`;
 
-  const groupBodies = { salary: salaryBody, overtime: overtimeBody, goals: goalsBody, shifts: shiftsBody, workdays: workdaysBody, adjustment: adjustmentBody, tax: taxBody, display: displayBody, data: dataBody, about: aboutBody };
+  const groupBodies = { salary: salaryBody, overtime: overtimeBody, goals: goalsBody, shifts: shiftsBody, features: featuresBody, shiftCalendar: shiftCalendarBody, workdays: workdaysBody, adjustment: adjustmentBody, tax: taxBody, display: displayBody, data: dataBody, about: aboutBody };
 
   if (isMobile) {
     const hasDetail = Boolean(sheetGroup);
@@ -2225,6 +2618,72 @@ function renderSettingsView() {
           </div>
         </form>
       </section>
+    </div>
+  `;
+}
+
+function renderShiftCalendarSettings(config) {
+  const todayShift = shiftCycleForCurrentTime({ ...state.settings, shiftCalendar: { ...config, enabled: true } });
+  return `
+    <div class="settings-group-body shift-settings-body">
+      <label class="check-row">
+        <input type="checkbox" name="shiftCalendar.enabled" value="true" ${config.enabled ? "checked" : ""}>
+        <span>在主导航显示倒班日历</span>
+      </label>
+      <div class="shift-settings-preview">
+        <div>
+          <span>今天班次</span>
+          <strong>${todayShift.item ? escapeHtml(todayShift.item.name) : "未排班"}</strong>
+          <small>${shiftTimeText(todayShift.item)} · ${shiftEndCountdownText(todayShift)} · 周期第 ${todayShift.cycleDay} 天</small>
+        </div>
+        <button class="plain-button" type="button" data-view="shift" ${config.enabled ? "" : "disabled"}>查看日历</button>
+      </div>
+      <div class="form-grid">
+        ${field("日历名称", `<input name="shiftCalendar.name" type="text" maxlength="24" value="${escapeAttr(config.name)}" placeholder="例如：车间倒班">`)}
+        ${field("班组名称", `<input name="shiftCalendar.teamName" type="text" maxlength="18" value="${escapeAttr(config.teamName)}" placeholder="例如：1 班">`)}
+        ${field("周期第 1 天日期", `<input name="shiftCalendar.anchorDate" type="date" value="${escapeAttr(config.anchorDate)}">`)}
+        ${field("周期开始时间", `<input name="shiftCalendar.anchorTime" type="time" value="${escapeAttr(config.anchorTime || "00:00")}">`)}
+        ${field("周期天数", `<input type="number" value="${config.items.length}" disabled aria-label="周期天数">`)}
+      </div>
+      <div class="shift-cycle-editor">
+        <div class="shift-cycle-head">
+          <div>
+            <strong>轮班规则</strong>
+            <span>按从上到下的顺序循环，可从工时班次复用上下班时间。</span>
+          </div>
+          <button class="plain-button" type="button" data-action="shift-cycle-add">增加一天</button>
+        </div>
+        ${config.items.map((item, index) => renderShiftCycleRow(item, index, config.items.length)).join("")}
+      </div>
+      <small class="helper">班次类型建议保持白班、上夜班、下夜班、休班；名称可以按你所在班组的叫法自行修改。</small>
+    </div>
+  `;
+}
+
+function renderShiftCycleRow(item, index, total) {
+  const timePresetOptions = shiftPresetTimeOptions();
+  return `
+    <div class="shift-cycle-row">
+      <div class="shift-cycle-index">第 ${index + 1} 天</div>
+      <input type="hidden" name="shiftCalendar.items.${index}.id" value="${escapeAttr(item.id)}">
+      ${field("班次名称", `<input name="shiftCalendar.items.${index}.name" type="text" maxlength="18" value="${escapeAttr(item.name)}" placeholder="可改成自己的叫法">`)}
+      ${field("类型", `
+        <select name="shiftCalendar.items.${index}.kind">
+          ${option(SHIFT_CALENDAR_KINDS.DAY, "白班", item.kind)}
+          ${option(SHIFT_CALENDAR_KINDS.NIGHT, "上夜班", item.kind)}
+          ${option(SHIFT_CALENDAR_KINDS.OFF_NIGHT, "下夜班", item.kind)}
+          ${option(SHIFT_CALENDAR_KINDS.REST, "休班", item.kind)}
+        </select>
+      `)}
+      ${field("复用时间", `
+        <select name="shiftCalendar.items.${index}.reusePresetId" aria-label="从工时班次复用第 ${index + 1} 天时间">
+          <option value="">不复用</option>
+          ${timePresetOptions.map((preset) => `<option value="${escapeAttr(preset.id)}">${escapeHtml(preset.label)}</option>`).join("")}
+        </select>
+      `)}
+      ${field("上班", `<input name="shiftCalendar.items.${index}.startTime" type="time" value="${escapeAttr(item.startTime)}">`)}
+      ${field("下班", `<input name="shiftCalendar.items.${index}.endTime" type="time" value="${escapeAttr(item.endTime)}">`)}
+      <button class="icon-button" type="button" data-action="shift-cycle-remove" data-index="${index}" ${total <= 1 ? "disabled" : ""} aria-label="删除第 ${index + 1} 天">×</button>
     </div>
   `;
 }
@@ -2493,11 +2952,15 @@ function settingsFromForm(form) {
   const nextCloud = { ...(state.cloud || {}) };
   const hasWorkweek = Boolean(form.querySelector('[name^="workweek."]'));
   const hasPresets = Boolean(form.querySelector('[name^="shiftPresets."]'));
+  const hasShiftCalendarItems = Boolean(form.querySelector('[name^="shiftCalendar.items."]'));
+  const hasShiftCalendarEnabled = Boolean(form.querySelector('[name="shiftCalendar.enabled"]'));
   const hasAutoAdj = Boolean(form.querySelector('[name="autoAdjustment.enabled"]'));
   const hasAutoFill = Boolean(form.querySelector('[name="autoFillWorkday"]'));
   const hasRestCycleMode = Boolean(form.querySelector('[name="restCycle.mode"]'));
   if (hasWorkweek) next.workweek = [];
   if (hasPresets) next.shiftPresets = [];
+  if (hasShiftCalendarItems) next.shiftCalendar.items = [];
+  if (hasShiftCalendarEnabled) next.shiftCalendar.enabled = false;
   if (hasAutoAdj) next.autoAdjustment.enabled = false;
   if (hasAutoFill) next.autoFillWorkday = false;
   for (const [key, value] of Object.entries(data)) {
@@ -2514,6 +2977,16 @@ function settingsFromForm(form) {
       const [, index, fieldName] = key.split(".");
       next.shiftPresets[index] = next.shiftPresets[index] || {};
       next.shiftPresets[index][fieldName] = numericSettingField(fieldName) ? Number(value || 0) : value;
+      continue;
+    }
+    if (key.startsWith("shiftCalendar.items.")) {
+      const [, , index, fieldName] = key.split(".");
+      next.shiftCalendar.items[index] = next.shiftCalendar.items[index] || {};
+      next.shiftCalendar.items[index][fieldName] = value;
+      continue;
+    }
+    if (key === "shiftCalendar.enabled") {
+      next.shiftCalendar.enabled = true;
       continue;
     }
     if (key === "autoAdjustment.enabled") {
@@ -2798,11 +3271,15 @@ async function postCloud(payload) {
 }
 
 function createCloudSnapshot() {
+  const settings = mergeSettings(state.settings || {});
+  const shiftCalendar = normalizeShiftCalendar(settings.shiftCalendar);
+  settings.shiftCalendar = shiftCalendar;
   return {
     app: "worktimeapp",
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
-    settings: mergeSettings(state.settings || {}),
+    settings,
+    shiftCalendar,
     entries: state.entries || [],
     adjustments: state.adjustments || [],
     activeView: state.activeView || "calendar",
@@ -2811,9 +3288,17 @@ function createCloudSnapshot() {
 }
 
 function applyCloudSnapshot(data, cloud) {
+  const rawSettings = data.settings || {};
+  const cloudShiftCalendar = data.shiftCalendar && typeof data.shiftCalendar === "object"
+    ? data.shiftCalendar
+    : rawSettings.shiftCalendar;
+  const restoredSettings = limitSettings(mergeSettings({
+    ...rawSettings,
+    ...(cloudShiftCalendar ? { shiftCalendar: normalizeShiftCalendar(cloudShiftCalendar) } : {})
+  }));
   state = {
     ...state,
-    settings: limitSettings(mergeSettings(data.settings || {})),
+    settings: restoredSettings,
     entries: Array.isArray(data.entries) ? data.entries : [],
     adjustments: Array.isArray(data.adjustments) ? data.adjustments : [],
     activeView: data.activeView || state.activeView || "calendar",
@@ -3626,6 +4111,7 @@ function limitSettings(settings) {
   next.restCycle.mode = Object.values(REST_CYCLE_MODES).includes(next.restCycle.mode) ? next.restCycle.mode : REST_CYCLE_MODES.WORKWEEK;
   next.restCycle.workDays = boundedNumber(next.restCycle.workDays, 1, 31);
   next.restCycle.restDays = boundedNumber(next.restCycle.restDays, 1, 14);
+  next.shiftCalendar = normalizeShiftCalendar(next.shiftCalendar);
   next.autoFillWorkday = Boolean(next.autoFillWorkday);
   return next;
 }
@@ -3738,7 +4224,7 @@ function goal(label, value, target, valueLabel, targetLabel) {
 }
 
 function viewTitle(view) {
-  return ({ calendar: "月历", records: "记录", reports: "报表", settings: "设置" })[view] || "月历";
+  return ({ calendar: "月历", shift: "倒班", records: "记录", reports: "报表", settings: "设置" })[view] || "月历";
 }
 
 function selectedDateLabel(date) {

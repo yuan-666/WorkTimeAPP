@@ -554,11 +554,15 @@ async function writeRecord(kv, key, record) {
 }
 
 function sanitizeData(data) {
+  const settings = data?.settings && typeof data.settings === "object" ? { ...data.settings } : {};
+  const shiftCalendar = sanitizeShiftCalendar(data?.shiftCalendar || settings.shiftCalendar || {});
+  if (shiftCalendar) settings.shiftCalendar = shiftCalendar;
   const safe = {
     app: "worktimeapp",
-    version: Number(data?.version || 2),
+    version: Number(data?.version || 3),
     exportedAt: String(data?.exportedAt || new Date().toISOString()),
-    settings: data?.settings || {},
+    settings,
+    shiftCalendar,
     entries: Array.isArray(data?.entries) ? data.entries : [],
     adjustments: Array.isArray(data?.adjustments) ? data.adjustments : [],
     activeView: data?.activeView || "calendar",
@@ -567,6 +571,42 @@ function sanitizeData(data) {
   const size = new TextEncoder().encode(JSON.stringify(safe)).byteLength;
   if (size > MAX_DATA_BYTES) throw new Error("云备份数据超过 1.8MB，请先导出本地备份或清理历史记录");
   return safe;
+}
+
+function sanitizeShiftCalendar(config = {}) {
+  const source = config && typeof config === "object" ? config : {};
+  const items = Array.isArray(source.items)
+    ? source.items.slice(0, 31).map((item, index) => sanitizeShiftCalendarItem(item, index))
+    : [];
+  return {
+    enabled: Boolean(source.enabled),
+    name: String(source.name || "我的倒班").trim().slice(0, 24) || "我的倒班",
+    teamName: String(source.teamName || "1 班").trim().slice(0, 18) || "1 班",
+    anchorDate: isDateText(source.anchorDate) ? String(source.anchorDate) : "2026-05-15",
+    anchorTime: isTimeText(source.anchorTime) ? String(source.anchorTime) : "00:00",
+    items
+  };
+}
+
+function sanitizeShiftCalendarItem(item = {}, index = 0) {
+  const kinds = new Set(["day", "night", "offNight", "rest", "custom"]);
+  const kind = kinds.has(item?.kind) ? item.kind : "day";
+  const restLike = kind === "rest" || kind === "offNight";
+  return {
+    id: String(item?.id || `cycle-${index + 1}`).slice(0, 48),
+    name: String(item?.name || `第${index + 1}天`).trim().slice(0, 18) || `第${index + 1}天`,
+    kind,
+    startTime: restLike ? "" : (isTimeText(item?.startTime) ? String(item.startTime) : ""),
+    endTime: restLike ? "" : (isTimeText(item?.endTime) ? String(item.endTime) : "")
+  };
+}
+
+function isDateText(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function isTimeText(value) {
+  return /^\d{2}:\d{2}$/.test(String(value || ""));
 }
 
 async function hashPassword(password, salt = randomSalt()) {
@@ -703,6 +743,7 @@ function publicRecord(record) {
 
 function publicAdminUser(record) {
   const data = record.data || {};
+  const shiftCalendar = data.shiftCalendar || data.settings?.shiftCalendar || {};
   return {
     userId: record.userId,
     status: record.status || "active",
@@ -715,6 +756,8 @@ function publicAdminUser(record) {
     syncCount: Number(record.syncCount || 0),
     entryCount: Array.isArray(data.entries) ? data.entries.length : 0,
     adjustmentCount: Array.isArray(data.adjustments) ? data.adjustments.length : 0,
+    shiftCalendarEnabled: Boolean(shiftCalendar.enabled),
+    shiftCycleLength: Array.isArray(shiftCalendar.items) ? shiftCalendar.items.length : 0,
     adminNote: record.adminNote || ""
   };
 }

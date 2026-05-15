@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import api from "../functions/index.js";
 
+let testIpCounter = 1;
+
 class MemoryKV {
   constructor(initial = {}) {
     this.store = new Map(Object.entries(initial));
@@ -168,6 +170,55 @@ test("cloud push conflict can be forced after explicit overwrite", async () => {
   assert.equal(pulled.data.entries[0].id, "local_forced");
 });
 
+test("cloud sync preserves shift calendar settings and explicit snapshot field", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const env = { worktimeapp: kv };
+  const keyInfo = await publicKeyInfo(env);
+  const passwordCipher = await encryptPassword("shift-worker-password", keyInfo.publicKey);
+  const shiftCalendar = {
+    enabled: true,
+    name: "A 线倒班",
+    teamName: "乙班",
+    anchorDate: "2026-05-15",
+    anchorTime: "08:00",
+    items: [
+      { id: "day", name: "早班", kind: "day", startTime: "08:00", endTime: "16:00" },
+      { id: "night", name: "夜班", kind: "night", startTime: "20:00", endTime: "04:00" },
+      { id: "off", name: "下夜班", kind: "offNight", startTime: "09:00", endTime: "10:00" },
+      { id: "rest", name: "休班", kind: "rest", startTime: "09:00", endTime: "10:00" }
+    ]
+  };
+
+  const registerResponse = await cloudRequest(env, {
+    action: "register",
+    userId: "shift_worker",
+    passwordCipher,
+    data: {
+      ...cloudData([]),
+      shiftCalendar,
+      settings: { shiftCalendar }
+    }
+  });
+  const registered = await registerResponse.json();
+  assert.equal(registerResponse.status, 200);
+
+  const pullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "shift_worker"
+  }, registered.sessionToken);
+  const pulled = await pullResponse.json();
+
+  assert.equal(pullResponse.status, 200);
+  assert.equal(pulled.data.shiftCalendar.enabled, true);
+  assert.equal(pulled.data.shiftCalendar.anchorTime, "08:00");
+  assert.equal(pulled.data.settings.shiftCalendar.teamName, "乙班");
+  assert.equal(pulled.data.shiftCalendar.items[1].startTime, "20:00");
+  assert.equal(pulled.data.shiftCalendar.items[1].endTime, "04:00");
+  assert.equal(pulled.data.shiftCalendar.items[2].startTime, "");
+  assert.equal(pulled.data.shiftCalendar.items[2].endTime, "");
+});
+
 async function generatePrivateJwk() {
   const pair = await crypto.subtle.generateKey(
     {
@@ -193,6 +244,7 @@ async function cloudRequest(env, body, sessionToken = "") {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      "x-client-ip": `198.51.100.${testIpCounter++}`,
       ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
     },
     body: JSON.stringify(body)
@@ -202,9 +254,17 @@ async function cloudRequest(env, body, sessionToken = "") {
 function cloudData(entries) {
   return {
     app: "worktimeapp",
-    version: 2,
+    version: 3,
     exportedAt: "2026-05-13T00:00:00.000Z",
     settings: {},
+    shiftCalendar: {
+      enabled: false,
+      name: "我的倒班",
+      teamName: "1 班",
+      anchorDate: "2026-05-15",
+      anchorTime: "00:00",
+      items: []
+    },
     entries,
     adjustments: [],
     activeView: "calendar",

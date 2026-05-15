@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import api from "../functions/index.js";
 
-const PORT = 4173;
+const requestedPort = Number.parseInt(process.env.PORT || "4173", 10);
+const PORT = Number.isInteger(requestedPort) && requestedPort > 0 ? requestedPort : 4173;
 const KV_FILE = path.join(process.cwd(), ".local-kv.json");
 
 // Simple mock for Cloudflare Workers / ESA KV namespace
