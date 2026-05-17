@@ -1,25 +1,31 @@
-# 明薪工时项目说明
+# 明薪记项目说明
 
-更新时间：2026-05-15 13:53 CST
-当前版本：v0.3.9
+更新时间：2026-05-18 00:42 CST
+当前版本：v0.4.3
 
 ## 项目定位
 
-明薪工时是一个离线优先的跨平台 PWA，用来记录工时、加班、请假、补贴扣款、目标、薪资报表和个税估算。目标平台包括 Windows、macOS、iOS、Android、鸿蒙浏览器和 WebView 场景。
+明薪记是一个离线优先的跨平台 PWA，用来记录工时、加班、请假、补贴扣款、目标、薪资报表和个税估算。名字取“把工资算明白、把工时记清楚”的意思；目标平台包括 Windows、macOS、iOS、Android、鸿蒙浏览器和 WebView 场景。
 
 核心产品方向是：少填、少猜、少误操作。用户每天打开应用后，应能快速判断今天是上班、加班、休息还是请假，并在保存前看到本条工资和本月收入变化。
 
 ## 当前状态
 
-- 技术栈：原生 HTML/CSS/JavaScript PWA，无前端框架，无运行时依赖。
+- 技术栈：原生 HTML/CSS/JavaScript PWA，无前端框架；原生打包使用 Capacitor Android/iOS 与 Electron 桌面壳。
 - 数据存储：浏览器 `localStorage`，支持 JSON 备份导入导出。
 - 远端仓库：`https://github.com/yuan-666/WorkTimeAPP.git`
 - Git 用户邮箱：`2991077067@qq.com`
-- 最新功能发布提交：`v0.3.9` 倒班云同步、班次结束倒计时、时间复用 + 窄桌面溢出修复
-- 最新发布说明：`RELEASE_NOTES.md`（推荐 Git 标签与 GitHub Release：`v0.3.9`）
-- 版本规则：补丁号只走 `0` 到 `9`；超过 `9` 时进入下一小版本，因此原 `v0.2.10` 记为 `v0.3.0`，当前版本为 `v0.3.9`。
+- 最新功能发布提交：`v0.4.3` App 化返回手势、类玻璃材质、平台识别、握持偏好和自分发正式发布
+- 最新发布说明：`RELEASE_NOTES.md`（推荐 Git 标签与 GitHub Release：`v0.4.3`）
+- 版本规则：补丁号只走 `0` 到 `9`；超过 `9` 时进入下一小版本，因此原 `v0.2.10` 记为 `v0.3.0`，`v0.3.9` 后进入 `v0.4.0`。
 - 本地预览：`npm run serve` 后打开 `http://127.0.0.1:4173/index.html`；如需避开旧预览端口，可用 `PORT=52730 npm run serve`
 - 静态构建：`npm run build`，输出目录为 `dist/`
+- 原生资源：`npm run assets:native` 生成 Android/iOS/Electron 图标与启动图。
+- 原生同步：`npm run cap:sync` 同步 `dist/` 到 `android/` 与 `ios/`。
+- 自分发整理：`npm run release:prepare` 生成 `release-upload/`；`npm run dist:self` 会先生成图标、同步原生工程、构建 PWA，再整理上传目录。
+- Android 构建：`npm run cap:android` 后进入 `android/` 执行 Gradle；当前已验证 debug APK，正式 AAB 需要签名材料。
+- iOS 打包：`npm run cap:ios` / `npx cap open ios`；正式归档需要完整 Xcode、Apple Team、证书和 profile。
+- 桌面打包：`npm run electron:pack` 生成开发验证 app，`npm run electron:dist` 生成分发包；正式 macOS 分发需要 Developer ID 签名与 notarization。
 - ESA 函数入口：`functions/index.js`，单个 `fetch` 入口分发云备份与管理员后台请求；用户界面不展示接口配置。
 - 云端 KV：`worktimeapp`，用户记录键为 `user:{userId}`；管理员配置键为 `admin_name`、`admin_passwd`；RSA-OAEP 私钥 JWK 键为 `RSA_key`。
 
@@ -35,6 +41,13 @@
 - `src/storage.js`：本地存储、备份、导入导出。
 - `src/export.js`：CSV、Excel、分享摘要。
 - `functions/index.js`：阿里云 ESA 单入口函数，提供云备份和管理员后台 API。
+- `capacitor.config.json`：Capacitor 原生壳配置，原生 WebView 使用 `dist/`。
+- `android/`：Android Studio / Gradle 工程，目标 SDK 36。
+- `ios/`：Xcode / Capacitor iOS 工程。
+- `electron/`：Electron 桌面壳主进程与 preload。
+- `electron-builder.yml`：macOS、Windows、Linux 打包配置。
+- `scripts/generate-native-assets.mjs`：生成原生图标和启动图。
+- `scripts/prepare-release.mjs`：整理 GitHub Release / 网盘自分发目录、安装说明、发布清单和 SHA-256 校验和。
 - `scripts/build.mjs`：静态构建脚本，把 PWA 文件复制到 `dist/`。
 - `scripts/serve.mjs`：本地预览和 ESA API mock 服务，默认端口 `4173`，支持通过 `PORT` 环境变量切换端口。
 - `sw.js`：Service Worker 离线缓存。
@@ -65,9 +78,14 @@
 - 日历视图每周底部显示工时和工资小计。
 - 支持跟随系统、浅色、深色三种主题模式；深色模式使用统一主题变量，避免白底输入框和低对比文字。
 - 数据管理支持阿里云 ESA + KV 云备份；用户侧隐藏接口配置，未登录时只显示登录/创建，登录后显示上传本机、恢复云端和退出登录。
+- 自分发目录 `release-upload/` 会收集 `pwa-dist/`、Android APK/AAB、当前版本 Electron DMG/ZIP/安装包、`INSTALL.md`、`release-manifest.json` 和 `SHA256SUMS.txt`；不会伪造未构建的平台产物，也不会混入旧版本桌面包。
 - 云备份快照版本为 `3`，会同时保存独立 `shiftCalendar` 字段和 `settings.shiftCalendar`；恢复时优先读取独立倒班快照并兼容旧结构。
 - 云备份密码在浏览器端使用 RSA-OAEP 公钥加密，服务端用 `RSA_key` 私钥解密后只保存 PBKDF2-SHA256 加盐哈希。
 - 云备份登录成功后会保存 7 天服务端签名用户会话；上传和恢复必须匹配同一个用户 ID，不在本机保存用户密码。
+- 云备份推荐额外配置 `SESSION_HMAC_SECRET` 作为会话签名密钥；未配置时兼容使用 `RSA_key` 派生签名密钥。
+- 云备份接口会校验可信 Origin、限制请求体、限制登录频率、前置拒绝未知 action，并对 entries、adjustments、settings、shiftCalendar 做白名单清洗。
+- 修改云备份密码必须同时提交有效会话和原密码；改密后 `sessionVersion` 递增，旧 token 立即失效。
+- 本地 JSON 备份不会导出云备份 `sessionToken`，导入旧备份时也不会恢复 token。
 - 独立后台 `admin.html` 支持用户总数、启用用户、同步/登录次数、IP 网段分布、使用事件、近 30 日使用趋势，以及管理员改密、停用/启用和备注。
 - 后台登录使用 `admin_name`、`admin_passwd`，成功后发放服务端签名短期会话；后台看板不返回用户工时明细。
 - 手机版月历页顶部为四宫格（税前/工时/目标/放假），点击可切换总工时↔总加班、放假↔上班天数；月份切换和明暗按钮独立排列。
@@ -94,13 +112,19 @@
 - 侧边栏底部版本信息区域增加溢出保护，防止文字重叠。
 - 窄桌面和平板宽度（约 720-1120px）会提前切换为单列/两列响应式布局；报表数字、年度进度条、日期/时间输入、记录筛选、工资设置、倒班设置和管理员看板均增加收缩与换行保护，避免页面被横向撑开。
 - 入口 HTML、主脚本模块导入和 Service Worker 注册使用版本参数，降低 PWA 发布后继续显示旧版本的概率。
+- `v0.4.0` 新增原生平台打包链：Android/iOS 使用 Capacitor，桌面使用 Electron；原生壳会自动走 `https://time.yuan6.cn/api/cloud`。
+- `v0.4.1` 用户展示名称改为“明薪记”，保留 `cn.yuanhuang.worktimeapp`、`worktimeapp` KV 和 `worktimeapp:v1` 本地存储，避免升级破坏原有安装与云备份。
+- `v0.4.1` 新增自分发整理脚本和 `release-upload/` 目录流程，当前已验证 Android debug APK、macOS arm64 DMG/ZIP、PWA 静态包和校验和生成。
+- `v0.4.3` 增强 App 化交互：登记抽屉、设置详情、云备份改密和倒班详情统一进入返回栈，嵌套层按层数一次性回退，平板/窄桌面也走 App 化布局并保留底部导航页脚，新增平台识别、握持偏好和 Web 层类 Liquid Glass 材质。
+- Android 工程已设置 target/compile SDK 36、预测返回、主题图标、边到边显示、禁用明文流量和关闭 WebView 调试。
+- Electron 工程启用沙箱、上下文隔离、CSP、受限外链和 macOS 系统材质窗口。
 
 ## 开发规范
 
 1. 每次修改代码、样式、文档、配置或发布信息，都必须同步更新 `PROJECT.md` 和 `MEMORY_UPDATES.md`。
 2. `PROJECT.md` 记录当前项目事实、结构、规则和交接状态；不要写流水账。
 3. `MEMORY_UPDATES.md` 记录本次修改的原因、文件、验证、风险和交给后续 AI 的注意事项。
-4. 发布版本时同步更新 `package.json`、`sw.js` 缓存名、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`；补丁号到 9 后进入下一小版本。
+4. 发布版本时同步更新 `package.json`、`sw.js` 缓存名、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、原生平台版本号；补丁号到 9 后进入下一小版本。
 5. 计算逻辑改动必须补或更新 `tests/calculations.test.js`。
 6. UI 改动要优先减少用户认知负担，避免把高级字段直接铺满首屏。
 7. 不要恢复劳动法合规弹窗；保留数据合理性校验和可配置倍率。
@@ -121,6 +145,12 @@ node --check functions/index.js
 node --check sw.js
 npm run build
 git diff --check
+npm audit --audit-level=moderate
+npm run assets:native
+npx cap sync
+npx cap doctor android
+npx cap doctor ios
+npm run release:prepare
 ```
 
 本地服务验证：
@@ -132,6 +162,9 @@ curl -I http://127.0.0.1:4173/index.html
 
 ## 最近交接重点
 
+- `v0.4.3` 本轮发布重点是 App 感和返回手势：统一二级层 history 处理，保存工时/设置后会消费返回层，切页会清掉旧抽屉和设置层；嵌套二级层不再连续 `history.back()`，而是按层数一次性回退；倒班详情在移动端变为底部抽屉；721-1120px 宽度使用底部导航、移动月历、登录状态页脚和设置 drill-in。视觉上增强底部导航、抽屉、设置详情、云备份改密的玻璃材质，并新增 `data-platform`、`data-display-mode`、`data-handedness`、`WorkTimeAppBridge.setHandedness()`，为 Android/HarmonyOS 差异化和鸿蒙原生壳桥接预留接口。发布目录已重新生成，Android debug APK 为 `versionCode 43/versionName 0.4.3`，macOS arm64 DMG/ZIP 为 `0.4.3`，脚本会跳过旧版本桌面包。
+- `v0.4.1` 本轮发布重点是品牌和自分发：产品名从“明薪工时”改为“明薪记”，新图标采用青绿色记录卡片与金色工资符号，PWA/Android/iOS/Electron/后台展示名已统一；技术 ID、KV 和本地存储保持不变。新增 `scripts/prepare-release.mjs`、`release:prepare`、`dist:self`、`dist:android:debug`、`dist:desktop`，当前 `release-upload/` 已包含 PWA 静态包、Android debug APK、macOS arm64 DMG/ZIP、安装说明、发布清单和 SHA-256 校验文件。iOS 自分发仍推荐 PWA 添加到主屏幕；原生 iOS 包需要 TestFlight、企业/组织内签名或开发者设备签名。
+- `v0.4.0` 本轮发布重点是原生打包与安全加固：新增 Capacitor Android/iOS、Electron 桌面壳、原生资产生成、Android target SDK 36、Electron CSP 和外链限制；云备份修复未知 action 绕限流、改密必须验证原密码、本地备份去除 session token、云端 settings 白名单清洗。当前本地能构建 Android debug APK 和 macOS arm64 Electron app；iOS 正式归档仍受限于完整 Xcode 和 Apple 签名材料。
 - `v0.3.9` 本轮发布重点是倒班云同步、班次结束倒计时、时间复用和窄桌面溢出修复：报表、设置、记录筛选、倒班页和页面切换动效在 756px 浏览器宽度下已完成浏览器扫描，无页面级横向滚动；入口资源版本参数和 Service Worker 缓存同步升级。
 - `v0.3.7` 新增可开关倒班日历，包含功能开关隐藏逻辑、白班/上夜班/下夜班/休班四段周期、锚点推算、本轮进度、下个休班和手机端紧凑倒班月历。
 - `v0.3.6` 为日历翻页添加了平滑的滑动切换动画（`slide-in`），大幅提升了月份切换时的视觉连续性。
@@ -140,7 +173,7 @@ curl -I http://127.0.0.1:4173/index.html
 - `v0.3.3` 本轮重点是 iOS 原生 HIG 风格全面重构（纯色卡片 + 微交互 + 弹簧缓动）、月份切换和左右滑动翻页、暗色模式完美修复、选中日期空白修复。新增密码修改和 API 限流。
 - `v0.3.1` 本轮修复重点是设置二级页状态复位、移动端下拉框稳定性、云同步持久登录和云端冲突覆盖。
 - `v0.3.0` 对应原 `v0.2.10`，后续版本也按 `0-9` 补丁号规则推进。
-- `tests/calculations.test.js` 本轮新增倒班周期测试，`tests/functions.test.js` 新增倒班云同步快照测试；总测试数当前为 50 项。
+- `tests/calculations.test.js` 覆盖倒班周期；`tests/functions.test.js` 覆盖倒班云同步、来源校验、请求体上限、管理员限流、未知 action 拒绝、改密会话失效和 settings 清洗。
 - `autoFillWorkday` 仍默认开启，会改变无记录工作日的月度工资显示；用户可在设置中关闭。
 - 发布前后需要保持本地 `main` 与 `origin/main` 对齐；交接前用 `git status --short --branch` 复核。
 - 后续优先优化方向：真机长时间滑动检查、2027 年节假日正式通知复核、ESA 真实环境联调、数据导出 PDF。

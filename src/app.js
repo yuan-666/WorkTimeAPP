@@ -34,22 +34,22 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.3.9";
+} from "./calculations.js?v=0.4.3";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.3.9";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.3.9";
+} from "./storage.js?v=0.4.3";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.4.3";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.3.9";
-const RELEASE_COUNT = 23;
-const CLOUD_API_BASE = "/api/cloud";
+const APP_VERSION = "v0.4.3";
+const RELEASE_COUNT = 26;
+const CLOUD_API_BASE = resolveCloudApiBase();
 const CLOUD_SESSION_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 let state = loadState();
 state.cloud = normalizeCloudConfig(state.cloud);
@@ -64,11 +64,18 @@ let ui = {
   entryError: "",
   entrySheetOpen: false,
   entrySheetVisible: false,
+  entrySheetHistoryPushed: false,
+  shiftDetailOpen: false,
+  shiftDetailVisible: false,
+  shiftDetailHistoryPushed: false,
   bulkMode: "add",
   bulkAddKind: "",
   bulkDraft: null,
   bulkDraftMonth: "",
   settingsSheetOpen: "",
+  settingsSheetHistoryPushed: false,
+  cloudChangePasswordHistoryPushed: false,
+  ignorePopstateCount: 0,
   notice: "",
   lastDeleted: null,
   recordsSearch: "",
@@ -115,8 +122,40 @@ const LEAVE_TYPES = {
   other: "其他请假"
 };
 
+function appViewportQuery() {
+  return "(max-width: 1120px), (pointer: coarse)";
+}
+
 applyTheme();
+applyRuntimeChrome();
 render();
+
+window.addEventListener("popstate", () => {
+  if (ui.ignorePopstateCount > 0) {
+    ui.ignorePopstateCount -= 1;
+    return;
+  }
+  if (ui.cloudChangePasswordOpen && isMobileViewport()) {
+    ui.cloudChangePasswordHistoryPushed = false;
+    closeCloudChangePassword({ fromHistory: true });
+    return;
+  }
+  if (ui.entrySheetOpen) {
+    ui.entrySheetHistoryPushed = false;
+    closeEntrySheet({ fromHistory: true });
+    return;
+  }
+  if (ui.shiftDetailOpen) {
+    ui.shiftDetailHistoryPushed = false;
+    closeShiftDetailSheet({ fromHistory: true });
+    return;
+  }
+  if (ui.settingsSheetOpen && isMobileViewport()) {
+    ui.settingsSheetHistoryPushed = false;
+    ui.settingsSheetOpen = "";
+    render();
+  }
+});
 
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action], [data-view], [data-date], [data-preset], [data-entry-intent], [data-time-shortcut], [data-leave-shortcut], [data-bulk-mode], [data-delete-entry], [data-edit-entry], [data-delete-adjustment]");
@@ -125,13 +164,18 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.view) {
     const nextView = target.dataset.view;
     ui.pageTransition = ui.view !== nextView;
+    consumeOpenLayersForNavigation();
+    const shouldCloseSettingsSheet = ui.settingsSheetOpen && (nextView !== "settings" || ui.view === "settings");
+    if (shouldCloseSettingsSheet) {
+      closeSettingsSheet({ skipHistory: true, deferRender: true });
+    }
     if (nextView !== "settings" || ui.view === "settings") {
       ui.settingsSheetOpen = "";
     }
     ui.view = nextView;
     state.activeView = ui.view;
-    ui.entrySheetOpen = false;
-    ui.entrySheetVisible = false;
+    ui.shiftDetailOpen = false;
+    ui.shiftDetailVisible = false;
     persist();
     render();
     return;
@@ -147,6 +191,8 @@ document.addEventListener("click", async (event) => {
     ui.entryError = "";
     if (ui.view === "calendar" && isMobileViewport() && target.closest(".calendar-panel, .unlogged-panel")) {
       openEntrySheet();
+    } else if (ui.view === "shift" && isMobileViewport() && target.closest(".shift-calendar-panel")) {
+      openShiftDetailSheet();
     } else {
       render();
     }
@@ -272,14 +318,17 @@ document.addEventListener("click", async (event) => {
   }
 
   if (action === "close-settings-sheet") {
-    ui.settingsSheetOpen = "";
-    render();
+    closeSettingsSheet();
+    return;
+  }
+
+  if (action === "close-shift-detail") {
+    closeShiftDetailSheet();
     return;
   }
 
   if (action === "open-settings-sheet") {
-    ui.settingsSheetOpen = target.dataset.group || "";
-    render();
+    openSettingsSheet(target.dataset.group || "");
     return;
   }
 
@@ -397,13 +446,20 @@ document.addEventListener("click", async (event) => {
 });
 
 let touchStartX = 0;
+let touchStartY = 0;
+let touchStartTarget = null;
 document.addEventListener("touchstart", (e) => {
   touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+  touchStartTarget = e.target;
 }, { passive: true });
 document.addEventListener("touchend", (e) => {
   if (!["calendar", "shift"].includes(ui.view) || !isMobileViewport() || ui.entrySheetOpen) return;
+  if (ui.shiftDetailOpen || ui.settingsSheetOpen) return;
+  if (touchStartTarget?.closest?.("input, select, textarea, button, .day-entry-panel, .settings-mobile-detail, .unlogged-list, .records-list, .shift-detail-panel")) return;
   const dx = e.changedTouches[0].clientX - touchStartX;
-  if (Math.abs(dx) < 60) return;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
   const delta = dx > 0 ? -1 : 1;
   let m = ui.monthIndex + delta;
   let y = ui.year;
@@ -559,7 +615,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.3.9", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.4.3", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -570,6 +626,7 @@ if ("serviceWorker" in navigator) {
 function render() {
   state.settings = limitSettings(state.settings);
   applyTheme();
+  applyRuntimeChrome();
   if (!availableViews().includes(ui.view)) {
     ui.view = "calendar";
     state.activeView = ui.view;
@@ -599,7 +656,20 @@ function render() {
   `;
   ui.pageTransition = false;
   syncEntrySheetState();
+  syncShiftDetailSheetState();
   updateEntryPreview();
+}
+
+function resolveCloudApiBase() {
+  const configured = String(globalThis.WORKTIME_API_BASE || "").trim();
+  if (configured) return configured.replace(/\/$/, "");
+  const protocol = globalThis.location?.protocol || "";
+  const hostname = globalThis.location?.hostname || "";
+  const isCapacitorLocalHost = protocol === "https:" && hostname === "localhost" && !globalThis.location?.port;
+  const isNativeShell = Boolean(globalThis.Capacitor?.isNativePlatform?.())
+    || isCapacitorLocalHost
+    || ["capacitor:", "ionic:", "app:", "file:"].includes(protocol);
+  return isNativeShell ? "https://time.yuan6.cn/api/cloud" : "/api/cloud";
 }
 
 function availableViews() {
@@ -616,17 +686,66 @@ function shouldShowSetupWizard() {
     && !state.settings._wizardDone;
 }
 
+function consumeLayerHistory() {
+  let layers = 0;
+  if (ui.entrySheetHistoryPushed) {
+    ui.entrySheetHistoryPushed = false;
+    layers += 1;
+  }
+  if (ui.shiftDetailHistoryPushed) {
+    ui.shiftDetailHistoryPushed = false;
+    layers += 1;
+  }
+  if (ui.settingsSheetHistoryPushed) {
+    ui.settingsSheetHistoryPushed = false;
+    layers += 1;
+  }
+  if (ui.cloudChangePasswordHistoryPushed) {
+    ui.cloudChangePasswordHistoryPushed = false;
+    layers += 1;
+  }
+  rewindHistoryLayers(layers);
+}
+
+function rewindHistoryLayers(count) {
+  if (!count) return;
+  ui.ignorePopstateCount += count;
+  if (count === 1) history.back();
+  else history.go(-count);
+}
+
+function consumeOpenLayersForNavigation() {
+  consumeLayerHistory();
+  ui.entrySheetOpen = false;
+  ui.entrySheetVisible = false;
+  ui.shiftDetailOpen = false;
+  ui.shiftDetailVisible = false;
+  ui.cloudChangePasswordOpen = false;
+}
+
 function openEntrySheet() {
+  if (isMobileViewport() && !ui.entrySheetHistoryPushed) {
+    history.pushState({ worktimeLayer: "entry-sheet" }, "", location.href);
+    ui.entrySheetHistoryPushed = true;
+  }
   ui.entrySheetOpen = true;
   ui.entrySheetVisible = false;
   render();
   window.requestAnimationFrame(() => {
     ui.entrySheetVisible = true;
     syncEntrySheetState();
+    if (isMobileViewport()) {
+      document.querySelector(".mobile-sheet-close")?.focus({ preventScroll: true });
+    }
   });
 }
 
-function closeEntrySheet() {
+function closeEntrySheet(options = {}) {
+  if (!options.fromHistory && ui.entrySheetHistoryPushed) {
+    ui.entrySheetHistoryPushed = false;
+    history.back();
+    return;
+  }
   ui.entrySheetVisible = false;
   syncEntrySheetState();
   window.setTimeout(() => {
@@ -638,10 +757,122 @@ function closeEntrySheet() {
   }, 230);
 }
 
+function closeEntrySheetAfterCommit() {
+  if (!ui.entrySheetOpen) return;
+  if (ui.entrySheetHistoryPushed) {
+    ui.entrySheetHistoryPushed = false;
+    rewindHistoryLayers(1);
+  }
+  ui.entrySheetOpen = false;
+  ui.entrySheetVisible = false;
+}
+
+function openShiftDetailSheet() {
+  if (isMobileViewport() && !ui.shiftDetailHistoryPushed) {
+    history.pushState({ worktimeLayer: "shift-detail" }, "", location.href);
+    ui.shiftDetailHistoryPushed = true;
+  }
+  ui.shiftDetailOpen = true;
+  ui.shiftDetailVisible = false;
+  render();
+  window.requestAnimationFrame(() => {
+    ui.shiftDetailVisible = true;
+    syncShiftDetailSheetState();
+    if (isMobileViewport()) {
+      document.querySelector(".shift-detail-close")?.focus({ preventScroll: true });
+    }
+  });
+}
+
+function closeShiftDetailSheet(options = {}) {
+  if (!options.fromHistory && ui.shiftDetailHistoryPushed) {
+    ui.shiftDetailHistoryPushed = false;
+    history.back();
+    return;
+  }
+  ui.shiftDetailVisible = false;
+  syncShiftDetailSheetState();
+  window.setTimeout(() => {
+    if (ui.shiftDetailVisible) return;
+    ui.shiftDetailOpen = false;
+    render();
+  }, 230);
+}
+
+function openSettingsSheet(group) {
+  if (isMobileViewport() && !ui.settingsSheetHistoryPushed) {
+    history.pushState({ worktimeLayer: "settings-sheet", group }, "", location.href);
+    ui.settingsSheetHistoryPushed = true;
+  }
+  ui.settingsSheetOpen = group;
+  render();
+}
+
+function closeSettingsSheet(options = {}) {
+  if (options.skipHistory && ui.settingsSheetHistoryPushed) {
+    ui.settingsSheetHistoryPushed = false;
+    rewindHistoryLayers(1);
+  }
+  if (!options.fromHistory && !options.skipHistory && ui.settingsSheetHistoryPushed) {
+    ui.settingsSheetHistoryPushed = false;
+    history.back();
+    return;
+  }
+  ui.settingsSheetOpen = "";
+  if (!options.deferRender) render();
+}
+
+function closeSettingsSheetAfterCommit() {
+  if (!ui.settingsSheetOpen) return;
+  let layers = 0;
+  if (ui.cloudChangePasswordHistoryPushed) {
+    ui.cloudChangePasswordHistoryPushed = false;
+    layers += 1;
+  }
+  if (ui.settingsSheetHistoryPushed) {
+    ui.settingsSheetHistoryPushed = false;
+    layers += 1;
+  }
+  rewindHistoryLayers(layers);
+  ui.cloudChangePasswordOpen = false;
+  ui.settingsSheetOpen = "";
+}
+
+function openCloudChangePassword() {
+  const nextOpen = !ui.cloudChangePasswordOpen;
+  if (nextOpen && isMobileViewport() && !ui.cloudChangePasswordHistoryPushed) {
+    history.pushState({ worktimeLayer: "cloud-change-password" }, "", location.href);
+    ui.cloudChangePasswordHistoryPushed = true;
+  }
+  if (!nextOpen && ui.cloudChangePasswordHistoryPushed) {
+    ui.cloudChangePasswordHistoryPushed = false;
+    history.back();
+    return;
+  }
+  ui.cloudChangePasswordOpen = nextOpen;
+  render();
+}
+
+function closeCloudChangePassword(options = {}) {
+  if (!options.fromHistory && ui.cloudChangePasswordHistoryPushed) {
+    ui.cloudChangePasswordHistoryPushed = false;
+    history.back();
+    return;
+  }
+  ui.cloudChangePasswordOpen = false;
+  render();
+}
+
 function syncEntrySheetState() {
   document.body.classList.toggle("entry-sheet-locked", ui.entrySheetOpen && isMobileViewport());
   document.querySelector(".day-entry-panel")?.classList.toggle("is-entry-sheet-open", ui.entrySheetVisible);
   document.querySelector(".entry-sheet-backdrop")?.classList.toggle("is-entry-sheet-open", ui.entrySheetVisible);
+}
+
+function syncShiftDetailSheetState() {
+  document.body.classList.toggle("entry-sheet-locked", (ui.entrySheetOpen || ui.shiftDetailOpen) && isMobileViewport());
+  document.querySelector(".shift-detail-panel")?.classList.toggle("is-shift-detail-open", ui.shiftDetailVisible);
+  document.querySelector(".shift-detail-backdrop")?.classList.toggle("is-shift-detail-open", ui.shiftDetailVisible);
 }
 
 function renderSetupWizard() {
@@ -652,7 +883,7 @@ function renderSetupWizard() {
       <div class="setup-wizard-card">
         <div class="setup-wizard-header">
           <img src="./assets/icon.svg" alt="" width="56" height="56">
-          <h1>欢迎使用明薪工时</h1>
+          <h1>欢迎使用明薪记</h1>
           <p>设置你的薪资和班次</p>
         </div>
         <form id="setup-form" class="setup-wizard-form">
@@ -717,7 +948,7 @@ function renderSidebar() {
       <div class="brand">
         <img src="./assets/icon.svg" alt="" width="40" height="40">
         <div>
-          <strong><span>明薪工时</span><a class="brand-version-link" href="./changelog.html">${APP_VERSION}</a></strong>
+          <strong><span>明薪记</span><a class="brand-version-link" href="./changelog.html">${APP_VERSION}</a></strong>
           <span>${MODE_LABELS[state.settings.salaryMode]}</span>
         </div>
       </div>
@@ -768,10 +999,25 @@ function renderMobileNav() {
 
 function navButton(view, label) {
   const active = ui.view === view ? "is-active" : "";
-  return `<button class="nav-button ${active}" type="button" data-view="${view}" aria-current="${active ? "page" : "false"}">${label}</button>`;
+  return `<button class="nav-button ${active}" type="button" data-view="${view}" aria-current="${active ? "page" : "false"}">${navIcon(view)}<span>${label}</span></button>`;
+}
+
+function navIcon(view) {
+  const paths = {
+    calendar: `<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/>`,
+    shift: `<path d="M12 3a9 9 0 1 0 9 9"/><path d="M21 3v6h-6"/><path d="M12 7v5l3 2"/>`,
+    records: `<path d="M7 4h10a2 2 0 0 1 2 2v14l-3-2-3 2-3-2-3 2V6a2 2 0 0 1 2-2Z"/><path d="M9 9h6M9 13h6"/>`,
+    reports: `<path d="M4 19V5"/><path d="M8 17V9"/><path d="M12 17V4"/><path d="M16 17v-6"/><path d="M20 17V7"/><path d="M3 19h18"/>`,
+    settings: `<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.15 2.15 0 0 1-3.04 3.04l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.09 1.65V21a2.15 2.15 0 0 1-4.3 0v-.08a1.8 1.8 0 0 0-1.09-1.65 1.8 1.8 0 0 0-1.98.36l-.05.05a2.15 2.15 0 0 1-3.04-3.04l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.65-1.09H3a2.15 2.15 0 0 1 0-4.3h.08A1.8 1.8 0 0 0 4.73 8.5a1.8 1.8 0 0 0-.36-1.98l-.05-.05a2.15 2.15 0 0 1 3.04-3.04l.05.05a1.8 1.8 0 0 0 1.98.36H9.5A1.8 1.8 0 0 0 10.6 2.2V2a2.15 2.15 0 0 1 4.3 0v.08a1.8 1.8 0 0 0 1.09 1.65 1.8 1.8 0 0 0 1.98-.36l.05-.05a2.15 2.15 0 0 1 3.04 3.04l-.05.05a1.8 1.8 0 0 0-.36 1.98v.11a1.8 1.8 0 0 0 1.65 1.09h.08a2.15 2.15 0 0 1 0 4.3h-.08A1.8 1.8 0 0 0 19.4 15Z"/>`
+  };
+  return `<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">${paths[view] || paths.calendar}</svg>`;
 }
 
 function isMobileViewport() {
+  return window.matchMedia?.(appViewportQuery()).matches;
+}
+
+function isCompactPhoneViewport() {
   return window.matchMedia?.("(max-width: 720px)").matches;
 }
 
@@ -984,7 +1230,7 @@ function renderCalendarView() {
           </section>`
       }
       ${ui.entrySheetOpen ? `<div class="entry-sheet-backdrop ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" data-action="close-entry-sheet"></div>` : ""}
-      <section class="detail-panel day-entry-panel ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" aria-label="每日记录" aria-hidden="${mobilePanelHidden ? "true" : "false"}" ${mobilePanelHidden ? "inert" : ""}>
+      <section class="detail-panel day-entry-panel ${ui.entrySheetVisible ? "is-entry-sheet-open" : ""}" role="${useListView ? "dialog" : "region"}" ${useListView ? "aria-modal=\"true\"" : ""} aria-label="每日记录" aria-hidden="${mobilePanelHidden ? "true" : "false"}" ${mobilePanelHidden ? "inert" : ""}>
         <div class="sheet-handle" aria-hidden="true"></div>
         <div class="panel-head">
           <div>
@@ -1028,6 +1274,7 @@ function renderShiftCalendarView() {
   const stats = shiftMonthStats(days);
   const progressPercent = todayShift.cycleLength ? Math.round(todayShift.cycleDay / todayShift.cycleLength * 100) : 0;
   const selectedEndText = shiftEndCountdownText(selectedShift);
+  const shiftDetailHidden = isMobileViewport() && !ui.shiftDetailOpen;
   return `
     <div class="workspace shift-layout">
       <section class="shift-hero">
@@ -1065,13 +1312,18 @@ function renderShiftCalendarView() {
         </div>
       </section>
 
-      <section class="detail-panel shift-detail-panel">
+      ${ui.shiftDetailOpen ? `<div class="shift-detail-backdrop ${ui.shiftDetailVisible ? "is-shift-detail-open" : ""}" data-action="close-shift-detail"></div>` : ""}
+      <section class="detail-panel shift-detail-panel ${ui.shiftDetailVisible ? "is-shift-detail-open" : ""}" role="${isMobileViewport() ? "dialog" : "region"}" ${isMobileViewport() ? "aria-modal=\"true\"" : ""} aria-label="倒班详情" aria-hidden="${shiftDetailHidden ? "true" : "false"}" ${shiftDetailHidden ? "inert" : ""}>
+        <div class="sheet-handle" aria-hidden="true"></div>
         <div class="panel-head">
           <div>
             <p class="eyebrow">${selectedDateLabel(ui.selectedDate)}</p>
             <h2>${selectedShift.item ? escapeHtml(selectedShift.item.name) : "未排班"}</h2>
           </div>
-          <span class="shift-kind-pill ${shiftKindClass(selectedShift.item)}">${escapeHtml(shiftKindLabel(selectedShift.item))}</span>
+          <div class="button-row">
+            <button class="icon-button mobile-sheet-close shift-detail-close" type="button" data-action="close-shift-detail" aria-label="关闭">×</button>
+            <span class="shift-kind-pill ${shiftKindClass(selectedShift.item)}">${escapeHtml(shiftKindLabel(selectedShift.item))}</span>
+          </div>
         </div>
         <div class="shift-detail-grid">
           ${summaryLine("时间", shiftTimeText(selectedShift.item), true)}
@@ -2179,13 +2431,16 @@ function renderMobileFooter() {
 
 function openCloudSettings() {
   ui.pageTransition = ui.view !== "settings";
+  consumeOpenLayersForNavigation();
   ui.view = "settings";
-  ui.settingsSheetOpen = "data";
-  ui.entrySheetOpen = false;
-  ui.entrySheetVisible = false;
+  if (isMobileViewport()) {
+    openSettingsSheet("data");
+  } else {
+    ui.settingsSheetOpen = "data";
+  }
   state.activeView = "settings";
   persist();
-  render();
+  if (!isMobileViewport()) render();
   requestAnimationFrame(() => {
     document.querySelector(".cloud-sync-card")?.scrollIntoView({ block: "center", behavior: "smooth" });
   });
@@ -2193,13 +2448,17 @@ function openCloudSettings() {
 
 function openShiftSettings() {
   ui.pageTransition = ui.view !== "settings";
+  consumeOpenLayersForNavigation();
   ui.view = "settings";
-  ui.settingsSheetOpen = state.settings?.shiftCalendar?.enabled ? "shiftCalendar" : "features";
-  ui.entrySheetOpen = false;
-  ui.entrySheetVisible = false;
+  const group = state.settings?.shiftCalendar?.enabled ? "shiftCalendar" : "features";
+  if (isMobileViewport()) {
+    openSettingsSheet(group);
+  } else {
+    ui.settingsSheetOpen = group;
+  }
   state.activeView = "settings";
   persist();
-  render();
+  if (!isMobileViewport()) render();
 }
 
 function updateShiftCycleRows(target, intent) {
@@ -2319,9 +2578,9 @@ function renderSettingsView() {
     { id: "workdays", title: "工作日与假期", summary: `${restCycleLabel(settings.restCycle.mode)} · 周${weekLabelByIndex(settings.weekStart)}开周`, open: false },
     { id: "adjustment", title: "自动补扣", summary: settings.autoAdjustment.enabled ? `已开启 ${money(settings.autoAdjustment.amount)}/天` : "未开启", open: false },
     { id: "tax", title: "个税设置", summary: "累计预扣法", open: false },
-    { id: "display", title: "显示", summary: themeModeLabel(settings.themeMode), open: false },
+    { id: "display", title: "显示", summary: `${themeModeLabel(settings.themeMode)} · ${handednessLabel(settings.handedness)}`, open: false },
     { id: "data", title: "数据管理", summary: state.cloud?.lastSyncAt ? `云同步 ${formatDateTime(state.cloud.lastSyncAt)}` : "本地备份与云同步", open: false },
-    { id: "about", title: "关于", summary: `明薪工时 ${APP_VERSION}`, open: false }
+    { id: "about", title: "关于", summary: `明薪记 ${APP_VERSION}`, open: false }
   ];
   if (sheetGroup && !settingsGroups.some((group) => group.id === sheetGroup)) {
     sheetGroup = "";
@@ -2486,6 +2745,14 @@ function renderSettingsView() {
           ${option("dark", "深色", settings.themeMode)}
         </select>
       `)}
+      ${field("握持习惯", `
+        <select name="handedness">
+          ${option("auto", "自动", settings.handedness)}
+          ${option("right", "右手优先", settings.handedness)}
+          ${option("left", "左手优先", settings.handedness)}
+        </select>
+      `)}
+      <small class="helper">PWA 无法直接读取真实握持手；鸿蒙或原生壳后续可通过 JS bridge 调用 <code>WorkTimeAppBridge.setHandedness()</code> 同步系统识别结果。</small>
     </div>`;
 
   const dataBody = `
@@ -2505,7 +2772,7 @@ function renderSettingsView() {
       <div class="about-logo">
         <img src="./assets/icon.svg" alt="" width="48" height="48">
         <div>
-          <strong>明薪工时</strong>
+          <strong>明薪记</strong>
           <span>${APP_VERSION}</span>
         </div>
       </div>
@@ -2575,7 +2842,7 @@ function renderSettingsView() {
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                   </button>
                   <h2>${escapeHtml(group.title)}</h2>
-                  <button class="plain-button" type="submit" style="color: var(--accent); padding: 0 16px; font-weight: 600; background: transparent; width: 36px; display: inline-flex; justify-content: flex-end; align-items: center;">保存</button>
+                  <button class="plain-button settings-detail-save" type="submit">保存</button>
                 </div>
                 ${groupBodies[group.id]}
               </form>
@@ -2716,7 +2983,7 @@ function renderCloudSyncPanel() {
         <div class="cloud-change-password-form">
           <div class="form-grid">
             ${field("原密码", `<input name="cloud.password" type="password" autocomplete="current-password" placeholder="输入当前密码">`)}
-            ${field("新密码", `<input name="cloud.newPassword" type="password" autocomplete="new-password" placeholder="至少 6 位">`)}
+            ${field("新密码", `<input name="cloud.newPassword" type="password" autocomplete="new-password" placeholder="至少 8 位">`)}
             ${field("确认新密码", `<input name="cloud.confirmPassword" type="password" autocomplete="new-password" placeholder="再次输入新密码">`)}
           </div>
           <div class="button-row">
@@ -2887,8 +3154,7 @@ function saveEntryObject(entry, notice, options = {}) {
   ui.entryIntent = "";
   ui.entryError = "";
   if (isMobileViewport()) {
-    ui.entrySheetOpen = false;
-    ui.entrySheetVisible = false;
+    closeEntrySheetAfterCommit();
   }
   persist(validation.warnings[0] ? `${notice}，${validation.warnings[0]}` : notice);
   render();
@@ -2941,7 +3207,8 @@ function saveSettings(form) {
   const draft = settingsFromForm(form);
   state.settings = draft.settings;
   state.cloud = draft.cloud;
-  ui.settingsSheetOpen = "";
+  if (isMobileViewport()) closeSettingsSheetAfterCommit();
+  else ui.settingsSheetOpen = "";
   persist("已保存设置");
   render();
 }
@@ -3044,8 +3311,7 @@ function saveSetupWizard(form) {
 
 async function handleCloudAction(action, sourceTarget = null) {
   if (action === "cloud-change-password-form") {
-    ui.cloudChangePasswordOpen = !ui.cloudChangePasswordOpen;
-    render();
+    openCloudChangePassword();
     return;
   }
 
@@ -3101,8 +3367,8 @@ async function handleCloudAction(action, sourceTarget = null) {
       render();
       return;
     }
-    if (auth.newPassword.length < 6) {
-      persist("新密码至少 6 位");
+    if (auth.newPassword.length < 8) {
+      persist("新密码至少 8 位");
       render();
       return;
     }
@@ -3139,6 +3405,11 @@ async function handleCloudAction(action, sourceTarget = null) {
     }
     if (!result.ok) throw new Error(cloudErrorMessage(actionName, result.error, result.status));
     if (actionName === "change-password") {
+      if (ui.cloudChangePasswordHistoryPushed) {
+        ui.cloudChangePasswordHistoryPushed = false;
+        ui.ignorePopstateCount += 1;
+        history.back();
+      }
       ui.cloudChangePasswordOpen = false;
     }
     const nextCloud = normalizeCloudConfig({
@@ -4092,6 +4363,7 @@ function updatePresetEditor(form) {
 function limitSettings(settings) {
   const next = mergeSettings(settings);
   next.themeMode = ["system", "light", "dark"].includes(next.themeMode) ? next.themeMode : "system";
+  next.handedness = ["auto", "left", "right"].includes(next.handedness) ? next.handedness : "auto";
   next.weekStart = boundedNumber(next.weekStart, 0, 6);
   next.weekStart = Math.round(next.weekStart);
   next.workweek = [...new Set((next.workweek || []).map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b);
@@ -4284,12 +4556,57 @@ function applyTheme() {
   document.querySelector("meta[name='theme-color']")?.setAttribute("content", effective === "dark" ? "#171b20" : "#176b5b");
 }
 
+function applyRuntimeChrome() {
+  const root = document.documentElement;
+  root.dataset.platform = detectPlatform();
+  root.dataset.displayMode = globalThis.matchMedia?.("(display-mode: standalone)")?.matches ? "standalone" : "browser";
+  root.dataset.pointer = globalThis.matchMedia?.("(pointer: coarse)")?.matches ? "coarse" : "fine";
+  const handedness = ["left", "right"].includes(state.settings?.handedness) ? state.settings.handedness : "auto";
+  root.dataset.handedness = handedness;
+  root.dataset.nativeShell = globalThis.Capacitor?.isNativePlatform?.() || globalThis.WORKTIME_DESKTOP ? "true" : "false";
+}
+
+function detectPlatform() {
+  const ua = navigator.userAgent || "";
+  if (/HarmonyOS|OpenHarmony|ArkWeb|HuaweiBrowser|HMSCore/i.test(ua)) return "harmony";
+  if (/Android/i.test(ua)) return "android";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  if (globalThis.WORKTIME_DESKTOP?.platform === "darwin" || /Macintosh/i.test(ua)) return "macos";
+  if (globalThis.WORKTIME_DESKTOP?.platform === "win32" || /Windows/i.test(ua)) return "windows";
+  if (globalThis.WORKTIME_DESKTOP?.platform === "linux" || /Linux/i.test(ua)) return "linux";
+  return "web";
+}
+
+function setHandednessPreference(value) {
+  const handedness = ["auto", "left", "right"].includes(value) ? value : "auto";
+  state.settings = limitSettings({ ...state.settings, handedness });
+  saveState(state);
+  applyRuntimeChrome();
+  render();
+}
+
+globalThis.WorkTimeAppBridge = {
+  ...(globalThis.WorkTimeAppBridge || {}),
+  setHandedness: setHandednessPreference
+};
+window.addEventListener("worktime:handedness", (event) => {
+  setHandednessPreference(event.detail?.handedness || event.detail);
+});
+
 function themeModeLabel(mode) {
   return ({
     system: "跟随系统",
     light: "浅色",
     dark: "深色"
   })[mode] || "跟随系统";
+}
+
+function handednessLabel(value) {
+  return ({
+    auto: "自动握持",
+    left: "左手优先",
+    right: "右手优先"
+  })[value] || "自动握持";
 }
 
 function themeIcon(mode) {

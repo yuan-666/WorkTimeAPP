@@ -1,6 +1,6 @@
 {
-  "name": "明薪工时",
-  "short_name": "明薪工时",
+  "name": "明薪记",
+  "short_name": "明薪记",
   "description": "专业简洁的工时、加班、考勤、薪资与个税记录工具。",
   "start_url": "./index.html",
   "display": "standalone",

@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.4.3 - 2026-05-18
+
+### Changed
+- 正式整理 App 化平台体验版本：统一移动端、平板和窄桌面的二级页面返回逻辑，登记抽屉、设置详情、云备份改密和倒班详情都会优先被系统返回/手势返回关闭。
+- 721-1120px 宽度也进入 App 式布局，保留底部导航、登录状态页脚、移动月历和设置 drill-in，减少“网页被压窄”的观感。
+- 底部导航、登记抽屉、倒班详情、设置详情和云备份改密表单增强类 Liquid Glass 玻璃材质，Android/HarmonyOS 使用更圆润的视觉变量。
+- 新增平台识别与握持偏好桥接能力，根节点会写入平台、显示模式、指针类型和握持设置，`WorkTimeAppBridge.setHandedness()` 可供后续原生壳同步左右手识别。
+
+### Fixed
+- 修复保存工时、保存设置、切换主页面和关闭嵌套二级层后 history 层残留导致的空返回或直接退应用问题。
+- 修复移动端倒班日期详情、云备份改密表单、设置详情组合打开时返回层级不稳定的问题。
+- 修复平板/窄桌面宽度下移动页脚、返回条和底部抽屉被后续 CSS 规则隐藏或定位不自然的问题。
+- 修复自分发整理时旧版本 Electron DMG/ZIP 混入新版 `release-upload/` 发布目录的问题。
+
+### Release
+- 版本升级到 `v0.4.3`，Service Worker 缓存名为 `worktimeapp-v43`。
+- Android `versionCode 43` / `versionName 0.4.3`。
+- iOS `CURRENT_PROJECT_VERSION 43` / `MARKETING_VERSION 0.4.3`。
+- 本版用于 GitHub Release、网盘下载和 ESA Pages 部署；Android 仍输出 debug APK，macOS arm64 DMG/ZIP 仍为未公证自分发包。
+
+## v0.4.2 - 2026-05-17
+
+### Added
+- 新增统一 App 内返回栈，登记抽屉、设置详情、云备份改密表单和倒班详情都能被系统返回/手势返回优先关闭。
+- 新增运行时平台识别与握持习惯设置，根节点会标记 Android、iOS、macOS、HarmonyOS、standalone/native shell 等状态。
+- 新增 `WorkTimeAppBridge.setHandedness()`，方便未来鸿蒙或其他原生壳把左右手/握持识别结果同步给 PWA。
+- 新增 `CONTEXT_SNAPSHOT.md`，压缩记录当前项目状态、用户方向和本轮接手重点。
+
+### Changed
+- 721-1120px 平板/窄桌面进入 App 化布局，使用底部导航、移动月历、设置分组详情和底部抽屉，不再像网页表单被压窄。
+- 底部导航、登记抽屉、倒班详情、设置详情和云备份改密表单增强玻璃材质，Android/HarmonyOS 使用更圆润的类 Liquid Glass 视觉变量。
+- 移动端倒班日期点击后打开倒班详情抽屉，查看后可用返回手势关闭。
+- 触控目标统一提升到 44px 以上，优化快捷按钮、批量切换、移动日历和后台登录的可点区域。
+- 自分发脚本只收集当前版本的桌面安装包，避免旧版 DMG/ZIP 混入新版 `release-upload/`。
+
+### Fixed
+- 修复保存工时后抽屉视觉关闭但 history 层残留的问题。
+- 修复保存设置详情后返回键出现空返回或直接离开应用的问题。
+- 修复从抽屉或快捷入口跳转到设置/记录时未消费旧 history 层的问题。
+- 修复移动端云备份改密表单无法被返回键优先关闭的问题。
+- 修复嵌套二级层一次关闭多层时连续 `history.back()` 可能造成空跳的问题，改为按层数一次性回退。
+- 修复 721-1120px 宽度下移动页脚和返回条被后续 CSS 隐藏的问题。
+
+## v0.4.1 - 2026-05-17
+
+### Added
+- 新增自分发整理脚本 `scripts/prepare-release.mjs`，生成 `release-upload/`、安装说明、发布清单和 `SHA256SUMS.txt`。
+- 新增 `dist:self`、`release:prepare`、`dist:android:debug`、`dist:desktop` 脚本，面向 GitHub Release、网盘和内部下载分发。
+
+### Changed
+- 产品展示名称改为「明薪记」，保留 `cn.yuanhuang.worktimeapp`、`worktimeapp` KV 和 `worktimeapp:v1` 本地存储以保证升级兼容。
+- 更新 PWA manifest、入口标题、侧边栏、向导、关于页、管理员后台、更新日志、Android/iOS/Electron 展示名称和桌面产物名。
+- 新图标采用青绿色收入记录卡片和金色工资符号，生成脚本同步输出 Android、iOS 和 Electron 原生资源。
+- 版本推进到 `v0.4.1`，入口资源参数、Service Worker 缓存、Android `versionCode/versionName`、iOS `MARKETING_VERSION` 同步更新。
+
+### Docs
+- README 和发布说明补充非商店安装策略：Android APK、PWA、桌面安装包、iOS PWA 优先，以及未签名包的系统提示风险。
+
+## v0.4.0 - 2026-05-17
+
+### Added
+- 新增 Capacitor Android/iOS 原生工程，PWA 可同步到 `android/` 与 `ios/`，用于后续 Android Studio、Xcode、TestFlight 和商店发布。
+- 新增 Electron 桌面壳，提供 macOS、Windows、Linux 打包配置，桌面端使用受限导航、禁用 Node 注入和 CSP 安全头。
+- 新增 `assets:native` 脚本，生成原生图标、启动图、Android 主题图标和 Electron 图标源文件。
+
+### Changed
+- 版本推进到 `v0.4.0`，入口资源参数、Service Worker 缓存、Android `versionCode/versionName`、iOS `MARKETING_VERSION` 同步更新。
+- 原生壳默认使用 `https://time.yuan6.cn/api/cloud` 作为云同步接口，避免打包后相对路径 `/api/cloud` 失效。
+- 移动端底部导航加入图标，登记抽屉和设置二级页支持浏览器/Android 返回键关闭。
+- Android 目标 SDK 升级到 36，启用预测返回、边到边显示、安全区适配、主题图标和禁用明文流量。
+- macOS/Electron 窗口使用系统材质、隐藏式标题栏和安全外链打开方式。
+
+### Security
+- 云备份接口限制可信 Origin，原生壳 Origin 进入白名单；响应统一增加 `no-store`、`nosniff` 和 `no-referrer`。
+- 登录/注册/改密限流前置到稳定 action 分桶，未知 action 会在密码校验前直接拒绝，避免变换 action 绕过限流。
+- 用户改密必须同时具备有效会话和原密码；改密后会话版本递增，旧 token 立即失效。
+- 本地 JSON 备份不再导出 `sessionToken`，导入备份时也不会恢复旧登录态。
+- 云端快照对 entries、adjustments、settings、shiftCalendar 做白名单清洗和数量上限限制。
+
+### Verification
+- `npm test` 覆盖云备份来源校验、请求体上限、管理员登录限流、未知 action 拒绝、会话改密失效、settings 清洗和倒班云同步。
+- 已生成 Android debug APK 和 macOS arm64 Electron app；iOS 工程已同步，但正式归档需要完整 Xcode、开发者团队和签名配置。
+
 ## v0.3.9 - 2026-05-15
 
 ### Added

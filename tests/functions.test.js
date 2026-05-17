@@ -219,6 +219,157 @@ test("cloud sync preserves shift calendar settings and explicit snapshot field",
   assert.equal(pulled.data.shiftCalendar.items[2].endTime, "");
 });
 
+test("cloud snapshot sanitizes settings and strips unknown fields", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const env = { worktimeapp: kv };
+  const keyInfo = await publicKeyInfo(env);
+  const passwordCipher = await encryptPassword("settings-worker-password", keyInfo.publicKey);
+
+  const registerResponse = await cloudRequest(env, {
+    action: "register",
+    userId: "settings_worker",
+    passwordCipher,
+    data: {
+      ...cloudData([]),
+      settings: {
+        baseSalary: 8888.88,
+        weekStart: 1,
+        handedness: "left",
+        unknownHtml: "<img src=x onerror=alert(1)>",
+        tax: {
+          standardDeductionMonthly: 5000,
+          unknownTaxField: "remove-me"
+        }
+      }
+    }
+  });
+  const registered = await registerResponse.json();
+  assert.equal(registerResponse.status, 200);
+
+  const pullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "settings_worker"
+  }, registered.sessionToken);
+  const pulled = await pullResponse.json();
+
+  assert.equal(pullResponse.status, 200);
+  assert.equal(pulled.data.settings.baseSalary, 8888.88);
+  assert.equal(pulled.data.settings.handedness, "left");
+  assert.equal(pulled.data.settings.unknownHtml, undefined);
+  assert.equal(pulled.data.settings.tax.unknownTaxField, undefined);
+});
+
+test("api rejects untrusted origins and oversized json bodies", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+
+  const nativeResponse = await api.fetch(new Request("https://time.yuan6.cn/api/cloud/key", {
+    headers: { origin: "capacitor://localhost" }
+  }), { worktimeapp: kv });
+  assert.equal(nativeResponse.status, 200);
+  assert.equal(nativeResponse.headers.get("access-control-allow-origin"), "capacitor://localhost");
+
+  const corsResponse = await api.fetch(new Request("https://example.com/api/cloud/key", {
+    headers: { origin: "https://evil.example" }
+  }), { worktimeapp: kv });
+  assert.equal(corsResponse.status, 403);
+  assert.equal(corsResponse.headers.get("access-control-allow-origin"), null);
+
+  const largeResponse = await api.fetch(new Request("https://example.com/api/cloud", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "ali-real-client-ip": "198.51.100.220"
+    },
+    body: JSON.stringify({ action: "login", userId: "worker_big", passwordCipher: "a".repeat(520000) })
+  }), { worktimeapp: kv });
+  assert.equal(largeResponse.status, 413);
+});
+
+test("cloud rejects unknown actions before password checks", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const response = await cloudRequest({ worktimeapp: kv }, {
+    action: "login_probe_1",
+    userId: "known_user",
+    passwordCipher: "not-valid"
+  });
+  const result = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(result.error, "未知操作");
+});
+
+test("admin login is rate limited by trusted client ip", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({
+    RSA_key: JSON.stringify(privateJwk),
+    admin_name: "admin",
+    admin_passwd: "secret123"
+  });
+  const env = { worktimeapp: kv };
+  let lastResponse;
+  for (let index = 0; index < 7; index += 1) {
+    lastResponse = await api.fetch(new Request("https://example.com/api/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "ali-real-client-ip": "198.51.100.221"
+      },
+      body: JSON.stringify({ username: "admin", passwordCipher: "not-valid" })
+    }), env);
+  }
+  assert.equal(lastResponse.status, 429);
+});
+
+test("user password changes invalidate old session tokens", async () => {
+  const privateJwk = await generatePrivateJwk();
+  const kv = new MemoryKV({ RSA_key: JSON.stringify(privateJwk) });
+  const env = { worktimeapp: kv };
+  const keyInfo = await publicKeyInfo(env);
+  const oldPasswordCipher = await encryptPassword("session-worker-password", keyInfo.publicKey);
+  const newPasswordCipher = await encryptPassword("session-worker-new-password", keyInfo.publicKey);
+
+  const registerResponse = await cloudRequest(env, {
+    action: "register",
+    userId: "session_worker",
+    passwordCipher: oldPasswordCipher,
+    data: cloudData([])
+  });
+  const registered = await registerResponse.json();
+  assert.equal(registerResponse.status, 200);
+
+  const missingPasswordResponse = await cloudRequest(env, {
+    action: "change-password",
+    userId: "session_worker",
+    sessionToken: registered.sessionToken,
+    newPasswordCipher
+  }, registered.sessionToken);
+  assert.equal(missingPasswordResponse.status, 400);
+
+  const changeResponse = await cloudRequest(env, {
+    action: "change-password",
+    userId: "session_worker",
+    sessionToken: registered.sessionToken,
+    passwordCipher: oldPasswordCipher,
+    newPasswordCipher
+  }, registered.sessionToken);
+  const changed = await changeResponse.json();
+  assert.equal(changeResponse.status, 200);
+
+  const oldPullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "session_worker"
+  }, registered.sessionToken);
+  assert.equal(oldPullResponse.status, 401);
+
+  const newPullResponse = await cloudRequest(env, {
+    action: "pull",
+    userId: "session_worker"
+  }, changed.sessionToken);
+  assert.equal(newPullResponse.status, 200);
+});
+
 async function generatePrivateJwk() {
   const pair = await crypto.subtle.generateKey(
     {
@@ -244,7 +395,7 @@ async function cloudRequest(env, body, sessionToken = "") {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-client-ip": `198.51.100.${testIpCounter++}`,
+      "ali-real-client-ip": `198.51.100.${testIpCounter++}`,
       ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {})
     },
     body: JSON.stringify(body)

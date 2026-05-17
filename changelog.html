@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#176b5b">
-    <title>更新日志 - 明薪工时</title>
+    <title>更新日志 - 明薪记</title>
     <link rel="icon" href="./assets/icon.svg" type="image/svg+xml">
     <style>
       :root {
@@ -296,7 +296,7 @@
       <header class="topline">
         <a class="brand" href="./index.html">
           <img src="./assets/icon.svg" alt="">
-          <span>明薪工时</span>
+          <span>明薪记</span>
         </a>
         <div class="actions">
           <button class="button" type="button" id="theme-toggle">跟随系统</button>
@@ -315,6 +315,70 @@
         <div class="timeline" aria-label="版本时间轴">
           <article class="item">
             <span class="index">01</span>
+            <span class="version">v0.4.3</span>
+            <div class="content">
+              <h2>App 化平台体验正式版</h2>
+              <span class="date">2026-05-18</span>
+              <ul>
+                <li>登记抽屉、设置详情、云备份改密和倒班详情统一支持系统返回与手势返回，先关闭子层，再回到主界面。</li>
+                <li>平板和窄桌面进入 App 式布局，保留底部导航、登录状态页脚、移动月历和设置 drill-in。</li>
+                <li>底部导航、抽屉和设置详情增强类 Liquid Glass 玻璃材质，Android/HarmonyOS 采用更圆润的视觉变量。</li>
+                <li>新增平台识别、显示模式、指针类型和握持偏好标记，为后续原生壳桥接左右手识别预留接口。</li>
+                <li>自分发脚本只收集当前版本桌面包，避免旧版 DMG/ZIP 混入新版发布目录。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">02</span>
+            <span class="version">v0.4.2</span>
+            <div class="content">
+              <h2>App 化返回手势与玻璃层</h2>
+              <span class="date">2026-05-17</span>
+              <ul>
+                <li>登记抽屉、设置详情、云备份改密表单和倒班详情统一进入 App 内返回栈，返回手势会先关闭当前子层。</li>
+                <li>平板和窄桌面宽度也使用底部导航、移动月历和设置二级菜单，不再像网页表单被压窄。</li>
+                <li>移动端倒班日期点击后打开详情抽屉，可查看本次结束、结束倒计时和周期信息。</li>
+                <li>底部导航、抽屉、设置详情和云备份改密表单增强玻璃材质，Android/HarmonyOS 使用更圆润的类 Liquid Glass 视觉。</li>
+                <li>新增平台识别和握持习惯设置，为未来鸿蒙/原生壳同步左右手识别结果预留安全桥接。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">03</span>
+            <span class="version">v0.4.1</span>
+            <div class="content">
+              <h2>明薪记品牌与自分发</h2>
+              <span class="date">2026-05-17</span>
+              <ul>
+                <li>产品展示名称改为“明薪记”，名字更短，也更明确地表达“工时记清楚、工资算明白”。</li>
+                <li>更新 PWA、Android、iOS、Electron、后台和更新日志的展示名称，同时保留技术包名和云备份命名，避免影响升级数据。</li>
+                <li>换用青绿色记录卡片与金色工资符号的新图标，并同步生成 Android、iOS、Electron 所需原生图标资源。</li>
+                <li>新增自分发脚本，可生成 GitHub Release 或网盘分发目录，自动带安装说明、发布清单和 SHA-256 校验文件。</li>
+                <li>README 和发布说明补充 Android APK、桌面安装包、iOS PWA 优先等非应用商店安装策略。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">04</span>
+            <span class="version">v0.4.0</span>
+            <div class="content">
+              <h2>原生打包与发布安全加固</h2>
+              <span class="date">2026-05-17</span>
+              <ul>
+                <li>新增 Capacitor Android/iOS 工程，Android 目标 SDK 升级到 36，支持边到边显示、预测返回、主题图标和安全 WebView 配置。</li>
+                <li>新增 Electron 桌面壳，提供 macOS/Windows/Linux 打包脚本，并在 macOS 使用系统材质窗口与安全导航限制。</li>
+                <li>移动端底部导航加入图标、返回键能关闭登记抽屉和设置详情，原生壳会自动使用线上云同步接口。</li>
+                <li>云备份接口加强来源校验、请求体大小限制、登录限流、会话版本失效、数据清洗和安全响应头。</li>
+                <li>新增原生图标/启动图生成脚本，README 和发布说明补充 Android、iOS、macOS、Windows、Linux 的打包流程。</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="item">
+            <span class="index">05</span>
             <span class="version">v0.3.9</span>
             <div class="content">
               <h2>倒班云同步与窄桌面修复</h2>
@@ -330,7 +394,7 @@
           </article>
 
           <article class="item">
-            <span class="index">02</span>
+            <span class="index">06</span>
             <span class="version">v0.3.7</span>
             <div class="content">
               <h2>倒班日历</h2>
@@ -345,7 +409,7 @@
           </article>
 
           <article class="item">
-            <span class="index">03</span>
+            <span class="index">07</span>
             <span class="version">v0.3.6</span>
             <div class="content">
               <h2>日历翻页平滑动画</h2>
@@ -359,7 +423,7 @@
           </article>
 
           <article class="item">
-            <span class="index">04</span>
+            <span class="index">08</span>
             <span class="version">v0.3.5</span>
             <div class="content">
               <h2>突破 Serverless KV 限制</h2>
@@ -374,7 +438,7 @@
           </article>
 
           <article class="item">
-            <span class="index">05</span>
+            <span class="index">09</span>
             <span class="version">v0.3.4</span>
             <div class="content">
               <h2>UX/UI 细节打磨与本地 API 服务</h2>
@@ -390,7 +454,7 @@
           </article>
 
           <article class="item">
-            <span class="index">06</span>
+            <span class="index">10</span>
             <span class="version">v0.3.3</span>
             <div class="content">
               <h2>iOS 原生风格重构与拇指区交互</h2>
@@ -407,7 +471,7 @@
           </article>
 
           <article class="item">
-            <span class="index">07</span>
+            <span class="index">11</span>
             <span class="version">v0.3.1</span>
             <div class="content">
               <h2>云同步与移动端设置修复</h2>
@@ -425,7 +489,7 @@
           </article>
 
           <article class="item">
-            <span class="index">08</span>
+            <span class="index">12</span>
             <span class="version">v0.3.0</span>
             <div class="content">
               <h2>手机端交互与登录修复</h2>
@@ -440,7 +504,7 @@
           </article>
 
           <article class="item">
-            <span class="index">09</span>
+            <span class="index">13</span>
             <span class="version">v0.2.9</span>
             <div class="content">
               <h2>班次切换与设置保存</h2>
@@ -454,7 +518,7 @@
           </article>
 
           <article class="item">
-            <span class="index">10</span>
+            <span class="index">14</span>
             <span class="version">v0.2.8</span>
             <div class="content">
               <h2>自动工时与手机二级设置</h2>
@@ -468,7 +532,7 @@
           </article>
 
           <article class="item">
-            <span class="index">11</span>
+            <span class="index">15</span>
             <span class="version">v0.2.7</span>
             <div class="content">
               <h2>缓存穿透与版本生效修复</h2>
@@ -482,7 +546,7 @@
           </article>
 
           <article class="item">
-            <span class="index">12</span>
+            <span class="index">16</span>
             <span class="version">v0.2.6</span>
             <div class="content">
               <h2>批量登记与移动端抽屉</h2>
@@ -496,7 +560,7 @@
           </article>
 
           <article class="item">
-            <span class="index">13</span>
+            <span class="index">17</span>
             <span class="version">v0.2.5</span>
             <div class="content">
               <h2>部署、安全云备份与侧边栏收口</h2>
@@ -510,7 +574,7 @@
           </article>
 
           <article class="item">
-            <span class="index">14</span>
+            <span class="index">18</span>
             <span class="version">v0.2.4</span>
             <div class="content">
               <h2>底部动态日志与版权外链</h2>
@@ -524,7 +588,7 @@
           </article>
 
           <article class="item">
-            <span class="index">15</span>
+            <span class="index">19</span>
             <span class="version">v0.2.3</span>
             <div class="content">
               <h2>独立后台与安全云备份</h2>
@@ -539,7 +603,7 @@
           </article>
 
           <article class="item">
-            <span class="index">16</span>
+            <span class="index">20</span>
             <span class="version">v0.2.2</span>
             <div class="content">
               <h2>输入、主题与时间轴更新日志</h2>
@@ -554,7 +618,7 @@
           </article>
 
           <article class="item">
-            <span class="index">17</span>
+            <span class="index">21</span>
             <span class="version">v0.2.1</span>
             <div class="content">
               <h2>云同步、后台与真实排班</h2>
@@ -568,7 +632,7 @@
           </article>
 
           <article class="item">
-            <span class="index">18</span>
+            <span class="index">22</span>
             <span class="version">v0.2.0</span>
             <div class="content">
               <h2>数据可视化与深色适配</h2>
@@ -582,7 +646,7 @@
           </article>
 
           <article class="item">
-            <span class="index">19</span>
+            <span class="index">23</span>
             <span class="version">v0.1.8</span>
             <div class="content">
               <h2>未补登工作日</h2>
@@ -595,7 +659,7 @@
           </article>
 
           <article class="item">
-            <span class="index">20</span>
+            <span class="index">24</span>
             <span class="version">v0.1.7</span>
             <div class="content">
               <h2>首次使用向导</h2>
@@ -608,7 +672,7 @@
           </article>
 
           <article class="item">
-            <span class="index">21</span>
+            <span class="index">25</span>
             <span class="version">v0.1.6</span>
             <div class="content">
               <h2>每日登记交互优化</h2>
@@ -621,7 +685,7 @@
           </article>
 
           <article class="item">
-            <span class="index">22</span>
+            <span class="index">26</span>
             <span class="version">v0.1.0</span>
             <div class="content">
               <h2>PWA 基础版本</h2>

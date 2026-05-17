@@ -2,27 +2,49 @@ const KV_NAMESPACE = "worktimeapp";
 const ADMIN_NAME_KEY = "admin_name";
 const ADMIN_PASSWD_KEY = "admin_passwd";
 const PASSWORD_PRIVATE_KEY = "RSA_key";
+const SESSION_SECRET_KEY = "SESSION_HMAC_SECRET";
 const USER_INDEX_KEY = "users:index";
 const USAGE_KEY = "usage:daily";
 const MAX_DATA_BYTES = 1_800_000;
+const MAX_JSON_BODY_BYTES = 500_000;
+const MAX_CLOUD_ENTRIES = 5000;
+const MAX_CLOUD_ADJUSTMENTS = 3000;
 const HASH_ITERATIONS = 120_000;
 const ADMIN_SESSION_TTL_SECONDS = 2 * 60 * 60;
 const USER_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://time.yuan6.cn",
+  "https://www.time.yuan6.cn",
+  "capacitor://localhost",
+  "ionic://localhost",
+  "app://localhost",
+  "https://localhost",
+  "http://localhost",
+  "http://127.0.0.1:4173",
+  "http://localhost:4173",
+  "http://127.0.0.1:52730",
+  "http://localhost:52730"
+];
 
 export default {
   async fetch(request, env = {}) {
-    if (request.method === "OPTIONS") return corsResponse(null, 204);
     const url = new URL(request.url);
     try {
+      if (!isAllowedOrigin(request, env)) {
+        return withSecurityHeaders(request, json({ error: "请求来源不被允许" }, 403), env);
+      }
+      if (request.method === "OPTIONS") return preflightResponse(request, env);
+      let response;
       if (url.pathname.startsWith("/api/admin")) {
-        return await handleAdmin(request, env, url);
+        response = await handleAdmin(request, env, url);
+      } else if (url.pathname.startsWith("/api/cloud")) {
+        response = await handleCloud(request, env, url);
+      } else {
+        response = json({ ok: true, service: "worktimeapp" });
       }
-      if (url.pathname.startsWith("/api/cloud")) {
-        return await handleCloud(request, env, url);
-      }
-      return json({ ok: true, service: "worktimeapp" });
+      return withSecurityHeaders(request, response, env);
     } catch (error) {
-      return json({ error: publicErrorMessage(error) }, error.status || 500);
+      return withSecurityHeaders(request, json({ error: publicErrorMessage(error) }, error.status || 500), env);
     }
   }
 };
@@ -34,18 +56,17 @@ async function handleCloud(request, env, url) {
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
-  if (contentLength > 500000) return json({ error: "请求体过大" }, 413);
-
-  const payload = await request.json();
+  const payload = await readJsonBody(request);
   const action = resolveAction(url, payload);
+  if (!ALLOWED_PAYLOAD_FIELDS[action]) return json({ error: "未知操作" }, 400);
   const unknownFields = validatePayloadFields(action, payload);
   if (unknownFields.length) return json({ error: "请求包含未知字段" }, 400);
   const userId = normalizeUserId(payload.userId);
   if (!userId) return json({ error: "用户 ID 仅支持 3-64 位字母、数字、下划线或短横线" }, 400);
 
   const client = getClientInfo(request);
-  if (!await checkRateLimit(kv, client)) return json({ error: "请求过于频繁，请稍后再试" }, 429);
+  const authScope = ["login", "register", "change-password"].includes(action) ? `cloud:auth:${userId}` : `cloud:${action}`;
+  if (!await checkRateLimit(kv, client, authScope, action === "login" ? 8 : 12)) return json({ error: "请求过于频繁，请稍后再试" }, 429);
   const key = userKey(userId);
   const existing = await readRecord(kv, key);
   const keyMaterial = await readPasswordKeyMaterial(kv).catch(() => null);
@@ -53,7 +74,7 @@ async function handleCloud(request, env, url) {
 
   if (action === "register") {
     const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
-    if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
+    if (password.length < 8) return json({ error: "密码至少 8 位" }, 400);
     if (existing) return json({ error: "该账号已存在，请直接登录" }, 409);
     const data = sanitizeData(payload.data);
     const passwordInfo = await hashPassword(password);
@@ -62,6 +83,7 @@ async function handleCloud(request, env, url) {
       userId,
       ...passwordInfo,
       status: "active",
+      sessionVersion: 1,
       revision: 1,
       createdAt: now,
       updatedAt: now,
@@ -77,7 +99,7 @@ async function handleCloud(request, env, url) {
     await writeRecord(kv, key, record);
     await updateUserIndex(kv, userId, record);
     await recordUsage(kv, "register", client, userId);
-    return json({ ...publicRecord(record), ...(await userSessionResponse(kv, userId, keyMaterial)) });
+    return json({ ...publicRecord(record), ...(await userSessionResponse(kv, userId, keyMaterial, record)) });
   }
 
   if (!existing) {
@@ -85,7 +107,7 @@ async function handleCloud(request, env, url) {
     return json({ error: "账号或密码不正确" }, 401);
   }
   const session = action === "login" ? null : await verifyUserSession(request, kv, payload.sessionToken, keyMaterial);
-  if (session && session.sub !== userId) {
+  if (session && (session.sub !== userId || !isCurrentUserSession(session, existing))) {
     await recordUsage(kv, "login_failed", client, userId);
     return json({ error: "登录信息已过期，请重新登录" }, 401);
   }
@@ -106,13 +128,13 @@ async function handleCloud(request, env, url) {
   if (action === "login") {
     await writeRecord(kv, key, touched);
     await recordUsage(kv, "login", client, userId);
-    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)) });
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial, touched)) });
   }
 
   if (action === "pull") {
     await writeRecord(kv, key, touched);
     await recordUsage(kv, "pull", client, userId);
-    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial)), data: touched.data || null });
+    return json({ ...publicRecord(touched), ...(await userSessionResponse(kv, userId, keyMaterial, touched)), data: touched.data || null });
   }
 
   if (action === "push") {
@@ -134,39 +156,38 @@ async function handleCloud(request, env, url) {
     };
     await writeRecord(kv, key, next);
     await recordUsage(kv, "push", client, userId);
-    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
+    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial, next)) });
   }
 
   if (action === "change-password") {
     const session = await verifyUserSession(request, kv, payload.sessionToken, keyMaterial);
-    if (session && session.sub !== userId) {
+    if (!session || session.sub !== userId || !isCurrentUserSession(session, existing)) {
       await recordUsage(kv, "login_failed", client, userId);
       return json({ error: "登录信息已过期，请重新登录" }, 401);
     }
-    if (!session) {
-      if (!payload.passwordCipher) return json({ error: "登录信息已过期，请重新登录" }, 401);
-      const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
-      if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
-      const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
-      if (!verified) {
-        await recordUsage(kv, "login_failed", client, userId);
-        return json({ error: "原密码不正确" }, 401);
-      }
+    if (!payload.passwordCipher) return json({ error: "请提供原密码" }, 400);
+    const password = await decryptPasswordPayload(kv, payload, "passwordCipher", keyMaterial);
+    if (password.length < 6) return json({ error: "密码至少 6 位" }, 400);
+    const verified = await verifyPassword(password, existing.passwordSalt, existing.passwordHash);
+    if (!verified) {
+      await recordUsage(kv, "login_failed", client, userId);
+      return json({ error: "原密码不正确" }, 401);
     }
     if (existing.status === "disabled") return json({ error: "账号已停用，暂时无法云备份" }, 403);
     if (!payload.newPasswordCipher) return json({ error: "请提供新密码" }, 400);
     const newPassword = await decryptPasswordPayload(kv, payload, "newPasswordCipher", keyMaterial);
-    if (newPassword.length < 6) return json({ error: "新密码至少 6 位" }, 400);
+    if (newPassword.length < 8) return json({ error: "新密码至少 8 位" }, 400);
     const passwordInfo = await hashPassword(newPassword);
     const now = new Date().toISOString();
     const next = {
       ...existing,
       ...passwordInfo,
+      sessionVersion: Number(existing.sessionVersion || 1) + 1,
       updatedAt: now
     };
     await writeRecord(kv, key, next);
     await recordUsage(kv, "change_password", client, userId);
-    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial)) });
+    return json({ ...publicRecord(next), ...(await userSessionResponse(kv, userId, keyMaterial, next)) });
   }
 
   return json({ error: "未知操作" }, 400);
@@ -176,7 +197,9 @@ async function handleAdmin(request, env, url) {
   const kv = await getKV(env);
 
   if (request.method === "POST" && url.pathname.endsWith("/login")) {
-    const body = await request.json();
+    const client = getClientInfo(request);
+    if (!await checkRateLimit(kv, client, "admin:login", 6)) return json({ error: "请求过于频繁，请稍后再试" }, 429);
+    const body = await readJsonBody(request, 80_000);
     const username = String(body.username || "").trim();
     const password = await decryptPasswordPayload(kv, body);
     const ok = await verifyAdminCredentials(kv, username, password);
@@ -197,7 +220,7 @@ async function handleAdmin(request, env, url) {
 
   if (request.method === "POST" && url.pathname.endsWith("/user")) {
     try {
-      const body = await request.json();
+      const body = await readJsonBody(request, 120_000);
       return json(await adminUpdateUser(kv, body));
     } catch (error) {
       return json({ error: error.message || "管理员操作失败" }, 400);
@@ -233,8 +256,13 @@ async function adminUpdateUser(kv, body) {
   let next = { ...record };
   if (action === "resetPassword") {
     const newPassword = await decryptPasswordPayload(kv, body, "newPasswordCipher");
-    if (newPassword.length < 6) throw new Error("新密码至少 6 位");
-    next = { ...next, ...(await hashPassword(newPassword)), updatedAt: new Date().toISOString() };
+    if (newPassword.length < 8) throw new Error("新密码至少 8 位");
+    next = {
+      ...next,
+      ...(await hashPassword(newPassword)),
+      sessionVersion: Number(next.sessionVersion || 1) + 1,
+      updatedAt: new Date().toISOString()
+    };
   } else if (action === "disable") {
     next.status = "disabled";
     next.updatedAt = new Date().toISOString();
@@ -449,24 +477,29 @@ async function signAdminSession(kv, username) {
   return `${body}.${signature}`;
 }
 
-async function userSessionResponse(kv, userId, keyMaterial = null) {
+async function userSessionResponse(kv, userId, keyMaterial = null, record = null) {
   return {
-    sessionToken: await signUserSession(kv, userId, keyMaterial),
+    sessionToken: await signUserSession(kv, userId, keyMaterial, record),
     tokenExpiresAt: new Date(Date.now() + USER_SESSION_TTL_SECONDS * 1000).toISOString()
   };
 }
 
-async function signUserSession(kv, userId, keyMaterial = null) {
+async function signUserSession(kv, userId, keyMaterial = null, record = null) {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: userId,
     role: "user",
+    sv: Number(record?.sessionVersion || 1),
     iat: now,
     exp: now + USER_SESSION_TTL_SECONDS
   };
   const body = base64UrlText(JSON.stringify(payload));
   const signature = await hmacSign(kv, body, keyMaterial);
   return `${body}.${signature}`;
+}
+
+function isCurrentUserSession(session, record) {
+  return Number(session?.sv || 1) === Number(record?.sessionVersion || 1);
 }
 
 async function verifyAdminSession(request, kv) {
@@ -507,8 +540,8 @@ async function verifyUserSession(request, kv, fallbackToken = "", keyMaterial = 
 }
 
 async function hmacSign(kv, value, keyMaterial = null) {
-  const km = await readPasswordKeyMaterial(kv, keyMaterial);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(km.raw));
+  const secret = await readSessionSecret(kv, keyMaterial);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
   const key = await crypto.subtle.importKey(
     "raw",
     digest,
@@ -518,6 +551,22 @@ async function hmacSign(kv, value, keyMaterial = null) {
   );
   const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
   return base64Url(new Uint8Array(signature));
+}
+
+let cachedSessionSecret = "";
+async function readSessionSecret(kv, keyMaterial = null) {
+  if (cachedSessionSecret) return cachedSessionSecret;
+  const configured = await readRecord(kv, SESSION_SECRET_KEY).catch(() => null);
+  const text = typeof configured === "string"
+    ? cleanStoredText(configured)
+    : cleanStoredText(configured?.value || configured?.secret || "");
+  if (text && text.length >= 32) {
+    cachedSessionSecret = `session:${text}`;
+    return cachedSessionSecret;
+  }
+  const km = await readPasswordKeyMaterial(kv, keyMaterial);
+  cachedSessionSecret = `rsa-fallback:${km.raw}`;
+  return cachedSessionSecret;
 }
 
 async function readRecord(kv, key) {
@@ -554,7 +603,7 @@ async function writeRecord(kv, key, record) {
 }
 
 function sanitizeData(data) {
-  const settings = data?.settings && typeof data.settings === "object" ? { ...data.settings } : {};
+  const settings = sanitizeSettings(data?.settings);
   const shiftCalendar = sanitizeShiftCalendar(data?.shiftCalendar || settings.shiftCalendar || {});
   if (shiftCalendar) settings.shiftCalendar = shiftCalendar;
   const safe = {
@@ -563,14 +612,208 @@ function sanitizeData(data) {
     exportedAt: String(data?.exportedAt || new Date().toISOString()),
     settings,
     shiftCalendar,
-    entries: Array.isArray(data?.entries) ? data.entries : [],
-    adjustments: Array.isArray(data?.adjustments) ? data.adjustments : [],
-    activeView: data?.activeView || "calendar",
-    backup: data?.backup || {}
+    entries: sanitizeEntries(data?.entries),
+    adjustments: sanitizeAdjustments(data?.adjustments),
+    activeView: sanitizeActiveView(data?.activeView),
+    backup: sanitizeBackup(data?.backup)
   };
   const size = new TextEncoder().encode(JSON.stringify(safe)).byteLength;
   if (size > MAX_DATA_BYTES) throw new Error("云备份数据超过 1.8MB，请先导出本地备份或清理历史记录");
   return safe;
+}
+
+function sanitizeSettings(settings = {}) {
+  const source = settings && typeof settings === "object" ? settings : {};
+  const salaryModes = new Set(["regular_overtime", "base_overtime", "comprehensive", "hourly"]);
+  const themeModes = new Set(["system", "light", "dark"]);
+  const handednessModes = new Set(["auto", "left", "right"]);
+  const restModes = new Set(["doubleWeekend", "singleWeekend", "customWeek", "work6rest1", "work14rest1", "customCycle"]);
+  return {
+    currency: "CNY",
+    salaryMode: salaryModes.has(source.salaryMode) ? source.salaryMode : "regular_overtime",
+    normalHoursPerDay: boundedNumber(source.normalHoursPerDay, 0, 16),
+    regularHourlyRate: boundedNumber(source.regularHourlyRate, 0, 100000),
+    overtimeMultiplier: boundedNumber(source.overtimeMultiplier, 0, 5),
+    restDayMultiplier: boundedNumber(source.restDayMultiplier, 0, 5),
+    holidayMultiplier: boundedNumber(source.holidayMultiplier, 0, 5),
+    baseSalary: boundedNumber(source.baseSalary, 0, 100000000),
+    standardMonthlyHours: boundedNumber(source.standardMonthlyHours, 0, 744),
+    baseHourlyRate: boundedNumber(source.baseHourlyRate, 0, 100000),
+    baseOvertimeRate: boundedNumber(source.baseOvertimeRate, 0, 100000),
+    comprehensiveHourlyRate: boundedNumber(source.comprehensiveHourlyRate, 0, 100000),
+    comprehensiveTargetHours: boundedNumber(source.comprehensiveTargetHours, 0, 744),
+    comprehensiveOvertimeMultiplier: boundedNumber(source.comprehensiveOvertimeMultiplier, 0, 5),
+    hourlyRate: boundedNumber(source.hourlyRate, 0, 100000),
+    defaultPresetId: sanitizeToken(source.defaultPresetId || "day", "preset"),
+    workweek: sanitizeWeekdayList(source.workweek),
+    weekStart: boundedInteger(source.weekStart, 0, 6, 1),
+    themeMode: themeModes.has(source.themeMode) ? source.themeMode : "system",
+    handedness: handednessModes.has(source.handedness) ? source.handedness : "auto",
+    autoDayType: source.autoDayType !== false,
+    autoFillWorkday: source.autoFillWorkday !== false,
+    shiftPresets: sanitizeShiftPresets(source.shiftPresets),
+    autoAdjustment: sanitizeAutoAdjustment(source.autoAdjustment),
+    goals: {
+      monthlyIncome: boundedNumber(source.goals?.monthlyIncome, 0, 100000000),
+      monthlyHours: boundedNumber(source.goals?.monthlyHours, 0, 744)
+    },
+    tax: sanitizeTaxSettings(source.tax),
+    restCycle: {
+      mode: restModes.has(source.restCycle?.mode) ? source.restCycle.mode : "doubleWeekend",
+      workDays: boundedInteger(source.restCycle?.workDays, 1, 365, 5),
+      restDays: boundedInteger(source.restCycle?.restDays, 1, 365, 2),
+      lastRestDate: isDateText(source.restCycle?.lastRestDate) ? String(source.restCycle.lastRestDate) : ""
+    },
+    shiftCalendar: sanitizeShiftCalendar(source.shiftCalendar)
+  };
+}
+
+function sanitizeShiftPresets(presets) {
+  if (!Array.isArray(presets)) return [];
+  const recordModes = new Set(["time", "hours"]);
+  const dayTypes = new Set(["workday", "restday", "holiday"]);
+  return presets.slice(0, 12).map((preset = {}, index) => ({
+    id: sanitizeToken(preset.id || `preset-${index + 1}`, "preset"),
+    name: truncateText(preset.name || `班次 ${index + 1}`, 24),
+    recordMode: recordModes.has(preset.recordMode) ? preset.recordMode : "time",
+    dayType: dayTypes.has(preset.dayType) ? preset.dayType : "workday",
+    startTime: isTimeText(preset.startTime) ? String(preset.startTime) : "",
+    endTime: isTimeText(preset.endTime) ? String(preset.endTime) : "",
+    breakMinutes: boundedNumber(preset.breakMinutes, 0, 600),
+    regularHours: boundedNumber(preset.regularHours, 0, 16),
+    overtimeHours: boundedNumber(preset.overtimeHours, 0, 12),
+    totalHours: boundedNumber(preset.totalHours, 0, 24)
+  }));
+}
+
+function sanitizeAutoAdjustment(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    enabled: Boolean(source.enabled),
+    type: source.type === "deduction" ? "deduction" : "allowance",
+    amount: boundedNumber(source.amount, 0, 100000),
+    category: truncateText(source.category || "日补贴", 60),
+    note: truncateText(source.note || "自动记录", 180)
+  };
+}
+
+function sanitizeTaxSettings(value = {}) {
+  const source = value && typeof value === "object" ? value : {};
+  const calculationMethods = new Set(["cumulative"]);
+  const deductionModes = new Set(["fixed", "percent"]);
+  return {
+    calculationMethod: calculationMethods.has(source.calculationMethod) ? source.calculationMethod : "cumulative",
+    standardDeductionMonthly: boundedNumber(source.standardDeductionMonthly, 0, 100000),
+    otherDeductionMode: deductionModes.has(source.otherDeductionMode) ? source.otherDeductionMode : "fixed",
+    fixedDeductionMonthly: boundedNumber(source.fixedDeductionMonthly, 0, 100000),
+    specialAdditionalDeductionMonthly: boundedNumber(source.specialAdditionalDeductionMonthly, 0, 100000),
+    deductionPercent: boundedNumber(source.deductionPercent, 0, 100),
+    socialSecurityMode: deductionModes.has(source.socialSecurityMode) ? source.socialSecurityMode : "fixed",
+    socialSecurityFixedMonthly: boundedNumber(source.socialSecurityFixedMonthly, 0, 100000),
+    socialSecurityPercent: boundedNumber(source.socialSecurityPercent, 0, 100)
+  };
+}
+
+function sanitizeWeekdayList(values) {
+  const weekdays = Array.isArray(values)
+    ? values.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+    : [1, 2, 3, 4, 5];
+  const unique = [...new Set(weekdays)].sort((a, b) => a - b);
+  return unique.length ? unique : [1, 2, 3, 4, 5];
+}
+
+function sanitizeEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.slice(0, MAX_CLOUD_ENTRIES).map(sanitizeEntry).filter(Boolean);
+}
+
+function sanitizeEntry(entry = {}) {
+  if (!entry || typeof entry !== "object" || !isDateText(entry.date)) return null;
+  const recordModes = new Set(["time", "hours"]);
+  const dayTypes = new Set(["workday", "restday", "holiday"]);
+  const sources = new Set(["manual", "rest-day", "leave-note", "auto-workday", "batch"]);
+  const leaveTypes = new Set(["annual", "personal", "sick", "compensatory", "other"]);
+  const leavePayModes = new Set(["paid", "unpaid", "deduct"]);
+  return {
+    id: sanitizeToken(entry.id, "entry"),
+    date: String(entry.date),
+    source: sources.has(entry.source) ? entry.source : "manual",
+    recordMode: recordModes.has(entry.recordMode) ? entry.recordMode : "time",
+    dayType: dayTypes.has(entry.dayType) ? entry.dayType : "workday",
+    startTime: isTimeText(entry.startTime) ? String(entry.startTime) : "",
+    endTime: isTimeText(entry.endTime) ? String(entry.endTime) : "",
+    breakMinutes: boundedNumber(entry.breakMinutes, 0, 600),
+    regularHours: boundedNumber(entry.regularHours, 0, 16),
+    overtimeHours: boundedNumber(entry.overtimeHours, 0, 12),
+    totalHours: boundedNumber(entry.totalHours, 0, 24),
+    target: truncateText(entry.target, 80),
+    note: truncateText(entry.note, 300),
+    leaveType: leaveTypes.has(entry.leaveType) ? entry.leaveType : "",
+    leavePayMode: leavePayModes.has(entry.leavePayMode) ? entry.leavePayMode : "",
+    leaveHours: boundedNumber(entry.leaveHours, 0, 24),
+    leavePayMultiplier: boundedNumber(entry.leavePayMultiplier, 0, 3),
+    leaveDeductionAmount: boundedNumber(entry.leaveDeductionAmount, 0, 100000),
+    createdAt: sanitizeIsoText(entry.createdAt),
+    updatedAt: sanitizeIsoText(entry.updatedAt)
+  };
+}
+
+function sanitizeAdjustments(adjustments) {
+  if (!Array.isArray(adjustments)) return [];
+  return adjustments.slice(0, MAX_CLOUD_ADJUSTMENTS).map(sanitizeAdjustment).filter(Boolean);
+}
+
+function sanitizeAdjustment(item = {}) {
+  if (!item || typeof item !== "object" || !isDateText(item.date)) return null;
+  return {
+    id: sanitizeToken(item.id, "adj"),
+    date: String(item.date),
+    type: item.type === "deduction" ? "deduction" : "allowance",
+    amount: boundedNumber(item.amount, 0, 100000),
+    category: truncateText(item.category, 60),
+    note: truncateText(item.note, 180),
+    auto: Boolean(item.auto),
+    createdAt: sanitizeIsoText(item.createdAt)
+  };
+}
+
+function sanitizeBackup(backup = {}) {
+  const source = backup && typeof backup === "object" ? backup : {};
+  return {
+    lastExportedAt: sanitizeIsoText(source.lastExportedAt)
+  };
+}
+
+function sanitizeActiveView(value) {
+  const allowed = new Set(["calendar", "shift", "records", "reports", "settings"]);
+  return allowed.has(value) ? value : "calendar";
+}
+
+function sanitizeToken(value, prefix) {
+  const text = String(value || "").trim();
+  if (/^[a-zA-Z0-9:_-]{1,80}$/.test(text)) return text;
+  return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`;
+}
+
+function truncateText(value, max) {
+  return String(value || "").trim().slice(0, max);
+}
+
+function sanitizeIsoText(value) {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}T/.test(text) ? text.slice(0, 40) : "";
+}
+
+function boundedNumber(value, min, max) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, Math.round(number * 100) / 100));
+}
+
+function boundedInteger(value, min, max, fallback = min) {
+  const number = Number(value);
+  if (!Number.isInteger(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
 }
 
 function sanitizeShiftCalendar(config = {}) {
@@ -706,7 +949,7 @@ function getClientInfo(request) {
 }
 
 function getClientIP(request) {
-  const headers = ["ali-real-client-ip", "ali-cdn-real-ip", "cf-connecting-ip", "x-real-ip", "x-client-ip", "x-forwarded-for"];
+  const headers = ["ali-real-client-ip", "ali-cdn-real-ip", "cf-connecting-ip", "x-real-ip"];
   for (const header of headers) {
     const value = request.headers.get(header);
     if (!value) continue;
@@ -781,30 +1024,103 @@ function validatePayloadFields(action, payload) {
 }
 
 const rateLimitMap = new Map();
-async function checkRateLimit(kv, client) {
+async function checkRateLimit(kv, client, scope = "default", limit = 10) {
   const now = Date.now();
-  const entry = rateLimitMap.get(client.ip) || { count: 0, windowStart: now };
-  if (now - entry.windowStart > 60000) {
-    rateLimitMap.set(client.ip, { count: 1, windowStart: now });
+  const minute = Math.floor(now / 60000);
+  const key = `rate:${scope}:${client.ip}:${minute}`;
+  const current = await readRecord(kv, key).catch(() => null);
+  if (current && Number(current.count || 0) >= limit) return false;
+  if (current) {
+    await writeRecord(kv, key, { count: Number(current.count || 0) + 1, updatedAt: now }).catch(() => {});
     return true;
   }
-  if (entry.count >= 10) return false;
+  await writeRecord(kv, key, { count: 1, updatedAt: now }).catch(() => {});
+  if (current !== null) return true;
+
+  const memoryKey = `${scope}:${client.ip}`;
+  const entry = rateLimitMap.get(memoryKey) || { count: 0, windowStart: now };
+  if (now - entry.windowStart > 60000) {
+    rateLimitMap.set(memoryKey, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= limit) return false;
   entry.count += 1;
-  rateLimitMap.set(client.ip, entry);
+  rateLimitMap.set(memoryKey, entry);
   return true;
 }
 
 function json(body, status = 200) {
-  return corsResponse(JSON.stringify(body), status, { "content-type": "application/json;charset=utf-8" });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json;charset=utf-8"
+    }
+  });
+}
+
+function preflightResponse(request, env) {
+  return withSecurityHeaders(request, new Response(null, {
+    status: 204,
+    headers: {
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "authorization, content-type",
+      "access-control-max-age": "600"
+    }
+  }), env);
+}
+
+function withSecurityHeaders(request, response, env = {}) {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("vary", "Origin");
+  const origin = request.headers.get("origin") || "";
+  if (origin && isAllowedOrigin(request, env)) {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+    headers.set("access-control-allow-headers", "authorization, content-type");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+function isAllowedOrigin(request, env = {}) {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  return allowedOrigins(env).has(origin);
+}
+
+function allowedOrigins(env = {}) {
+  const configured = String(env.ALLOWED_ORIGINS || env.allowed_origins || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
+}
+
+async function readJsonBody(request, maxBytes = MAX_JSON_BODY_BYTES) {
+  const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
+  if (contentLength > maxBytes) throw httpError("请求体过大", 413);
+  const text = await request.text();
+  const size = new TextEncoder().encode(text).byteLength;
+  if (size > maxBytes) throw httpError("请求体过大", 413);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw httpError("请求格式不正确", 400);
+  }
 }
 
 function corsResponse(body, status, headers = {}) {
   return new Response(body, {
     status,
     headers: {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, POST, OPTIONS",
-      "access-control-allow-headers": "authorization, content-type",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
       ...headers
     }
   });

@@ -102,6 +102,7 @@ export const DEFAULT_SETTINGS = {
   workweek: [1, 2, 3, 4, 5],
   weekStart: 1,
   themeMode: "system",
+  handedness: "auto",
   autoDayType: true,
   autoFillWorkday: true,
   shiftPresets: [

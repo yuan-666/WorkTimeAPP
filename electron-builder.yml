@@ -1,0 +1,31 @@
+appId: cn.yuanhuang.worktimeapp
+productName: 明薪记
+copyright: Copyright © 2026 yuan
+asar: true
+icon: build/icon.png
+files:
+  - dist/**
+  - electron/**
+  - package.json
+extraMetadata:
+  main: electron/main.cjs
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+dmg:
+  sign: false
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+  category: Office
+directories:
+  output: release

@@ -18,6 +18,82 @@
 - 后续建议：
 ```
 
+## 2026-05-18 00:42 CST - v0.4.3 App 化平台体验发布准备
+
+- 触发原因：用户要求本版修改完成后发布为新版本，先推送 GitHub 方便 ESA 部署，再构建平台安装包并发布 GitHub Release，同时更新 README、版本说明和项目描述文件。
+- 修改文件：`package.json`、`package-lock.json`、`index.html`、`sw.js`、`src/app.js`、`android/app/build.gradle`、`ios/App/App.xcodeproj/project.pbxproj`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`CONTEXT_SNAPSHOT.md`、`MEMORY_UPDATES.md`，以及 `dist/`、`android/app/src/main/assets/public/`、`ios/App/App/public/` 等构建同步产物。
+- 行为变化：
+  - 将发布线推进到 `v0.4.3`，入口资源参数、Service Worker 缓存名 `worktimeapp-v43`、Android `versionCode 43/versionName 0.4.3`、iOS `CURRENT_PROJECT_VERSION 43/MARKETING_VERSION 0.4.3` 同步对齐。
+  - `CHANGELOG.md` 和 `changelog.html` 新增 `v0.4.3` 顶部条目，说明 App 内返回栈、平板/窄桌面 App 化布局、类 Liquid Glass 视觉、平台识别和自分发脚本修复。
+  - `RELEASE_NOTES.md` 修正发布日期和 iOS build 号，作为 GitHub Release 的说明源。
+  - `CONTEXT_SNAPSHOT.md` 从“待处理”改为当前发布快照，保留 ESA 输出目录、函数入口、自分发流程和后续原生壳约束。
+- 验证结果：`npm test` 55 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/prepare-release.mjs`、`scripts/generate-native-assets.mjs`、`electron/main.cjs`、`electron/preload.cjs` 通过；`npm run build` 成功；`npm audit --audit-level=moderate` 0 漏洞；`npm run assets:native` 成功；`npx cap sync` 成功；`npx cap doctor android` 与 `npx cap doctor ios` 均通过；`git diff --check` 通过。
+- 风险/注意：Git 仓库只提交源码、原生工程和描述文件；Android APK、macOS DMG/ZIP、`release-upload/` 等自分发附件由推送后单独构建并上传 GitHub Release。Android 当前仍是 debug APK；macOS 包仍未 Developer ID 公证。
+- 后续建议：推送 `main` 后重新构建 Android debug APK、Electron macOS arm64 DMG/ZIP，运行 `npm run release:prepare`，确认 `release-upload/release-manifest.json` 只包含 `v0.4.3` 产物，再创建 `v0.4.3` GitHub Release。
+
+## 2026-05-18 00:35 CST - v0.4.2 App 化收口与自分发产物校验
+
+- 触发原因：继续未完成的 App 化任务，并补充用户指出的“设备页面更像 App、二级菜单要支持返回手势、Android/HarmonyOS 参考 Liquid Glass、检查溢出和平台体验”的要求。
+- 修改文件：`src/app.js`、`styles.css`、`scripts/prepare-release.mjs`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`、`dist/`、`android/app/build/outputs/apk/debug/app-debug.apk`、`release/`、`release-upload/`。
+- 行为变化：
+  - `consumeLayerHistory()` 改为统计已打开层数后一次性 `history.go(-count)`，避免云备份改密 + 设置详情等嵌套层连续 `history.back()` 时出现空跳。
+  - 721-1120px 的移动页脚和返回条增加后置 CSS 规则，修复被后续默认隐藏覆盖的问题；平板/窄桌面会保留底部导航、登录状态页脚和 App 式底部抽屉。
+  - 平板宽度下登记抽屉和倒班详情居中显示为圆角浮层，减少“网页压窄”的视觉感。
+  - `scripts/prepare-release.mjs` 只收集文件名包含当前 `package.json` 版本号的 Electron 桌面包，旧版本 DMG/ZIP 只在终端提示 ignored，不写入发布清单，也不混入新版发布目录。
+  - 重新构建 Android debug APK 和 macOS arm64 Electron DMG/ZIP，并重新生成 `release-upload/` 与 SHA-256 校验。
+- 验证结果：`npm test` 55 项通过；`node --check src/app.js`、`functions/index.js`、`sw.js`、`scripts/prepare-release.mjs` 通过；`npm run build` 成功；`npx cap sync` 成功；`npm run assets:native` 成功；`npx cap doctor android` 与 `npx cap doctor ios` 通过；`npm audit --audit-level=moderate` 0 漏洞；浏览器 390px 验证月历日期登记抽屉、设置数据管理二级页、云备份底部入口、倒班详情返回关闭、管理员登录页无溢出；浏览器 900px 验证底部导航/页脚显示、登记抽屉居中、无页面级横向滚动；`JAVA_HOME=/opt/homebrew/opt/openjdk@21 ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew assembleDebug` 成功，debug APK metadata 为 `versionCode 42/versionName 0.4.2`；`npm run electron:dist` 成功生成 `明薪记-0.4.2-arm64.dmg` 和 `明薪记-0.4.2-arm64-mac.zip`；`npm run release:prepare` 成功，发布目录仅收集 v0.4.2 桌面包，发布清单不含旧 v0.4.1 文件；`git diff --check` 通过。
+- 风险/注意：当前 Android 仍是 debug APK，macOS 包仍为 ad-hoc 签名且未 notarize；AndroidLiquidGlass 未直接引入 Compose/Kotlin，当前用 Web CSS 实现类似玻璃观感；普通 PWA 不能直接读取鸿蒙握持手语义能力，后续需要原生壳安全桥接。
+- 后续建议：发布前再次运行 `git diff --check` 和查看 `release-upload/release-manifest.json`；如果要公开长期分发，优先补 Android release keystore、macOS Developer ID notarization、Windows 代码签名。
+
+## 2026-05-17 23:58 CST - v0.4.2 App 化返回手势与平台体验
+
+- 触发原因：用户要求先压缩上下文再继续，并指出当前仍太像网页；二级菜单需要支持返回手势关闭而不是直接退出到桌面，同时希望 Android/HarmonyOS 视觉更接近 Liquid Glass，并为鸿蒙握持手/左右手识别等平台特性预留能力。
+- 修改文件：`CONTEXT_SNAPSHOT.md`、`src/app.js`、`src/calculations.js`、`functions/index.js`、`tests/functions.test.js`、`styles.css`、`index.html`、`sw.js`、`package.json`、`package-lock.json`、`android/app/build.gradle`、`ios/App/App.xcodeproj/project.pbxproj`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 新增 `CONTEXT_SNAPSHOT.md`，压缩记录当前 `v0.4.2` 项目状态、自分发策略和本轮 App 化接手重点。
+  - `isMobileViewport()` 扩展到 `max-width:1120px` 或粗指针设备，平板/窄桌面也使用底部导航、移动月历和设置二级详情，不再显示被压窄的桌面长表单。
+  - 登记抽屉、设置详情、云备份改密表单和倒班详情统一进入 App 内返回栈；保存工时/设置、切换页面和快捷跳转时会消费对应 history 层，避免返回键空跳或直接退出。
+  - 移动端倒班日期点击后打开倒班详情底部抽屉，展示本次结束、距本次结束、锚点和月统计，可用返回手势或关闭按钮退出。
+  - 新增平台感知：根节点写入 `data-platform`、`data-display-mode`、`data-pointer`、`data-handedness`、`data-native-shell`；新增握持习惯设置（自动/左手优先/右手优先）和 `WorkTimeAppBridge.setHandedness()`，供后续鸿蒙/原生壳桥接真实识别结果。
+  - Web 层增强类 Liquid Glass 视觉：底部导航、登记抽屉、倒班详情、设置详情和云备份改密表单使用更强的 blur、亮边、透镜层和圆角；Android/HarmonyOS 平台变量更圆润。
+  - 触控目标统一提升到 44px 以上，优化快捷按钮、批量切换、移动日历、未补登项和后台登录页；管理员 30 日趋势改为明确横向滚动，降低窄屏溢出。
+  - 版本提升到 `v0.4.2`，入口资源参数、Service Worker 缓存名 `worktimeapp-v42`、Android `versionCode 42/versionName 0.4.2`、iOS `CURRENT_PROJECT_VERSION 42/MARKETING_VERSION 0.4.2` 同步更新。
+- 验证结果：完整收尾结果见上方 `2026-05-18 00:35 CST - v0.4.2 App 化收口与自分发产物校验`；本轮已完成测试、构建、Capacitor 同步、Capacitor doctor、npm audit、浏览器 390/900px 回归、Android debug APK、Electron macOS arm64 DMG/ZIP 和 `release-upload/` 重新生成。
+- 风险/注意：AndroidLiquidGlass 是 Compose 原生库，当前 PWA/Capacitor 架构没有直接引入 Kotlin/Compose，而是在 WebView 中用 CSS 复刻玻璃材质；普通 PWA 无法直接获得鸿蒙握持手语义能力，必须靠后续 HarmonyOS 原生壳/ArkWeb JS bridge 安全注入。
+- 后续建议：真机重点检查 Android 返回手势、iOS Safari 添加到主屏幕后返回层、HarmonyOS 浏览器/WebView 的 `backdrop-filter` 性能；若要做完整鸿蒙壳，建议新建 `harmony/` 工程而不是混入现有 Capacitor 目录。
+
+## 2026-05-17 23:30 CST - v0.4.1 明薪记品牌与自分发
+
+- 触发原因：用户确认暂时不需要应用商店分发，希望通过 GitHub、网盘等方式让用户自行下载安装，并要求基于项目取一个好听合适有意义的名字，同时生成图标。
+- 修改文件：`.gitignore`、`package.json`、`package-lock.json`、`index.html`、`manifest.webmanifest`、`sw.js`、`src/app.js`、`admin.html`、`changelog.html`、`styles.css`、`DESIGN.md`、`capacitor.config.json`、`android/`、`ios/`、`electron/main.cjs`、`electron-builder.yml`、`assets/icon.svg`、`assets/native/`、`build/icon.png`、`scripts/generate-native-assets.mjs`、`scripts/prepare-release.mjs`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 产品展示名统一改为“明薪记”，含义是“把工资算明白、把工时记清楚”；PWA、首启向导、侧边栏、关于页、后台、更新日志、Android/iOS/Electron 展示名称同步修改。
+  - 保留 `cn.yuanhuang.worktimeapp`、`worktimeapp` KV 和 `worktimeapp:v1` 本地存储 key，避免因为改名破坏已安装用户升级、云备份和本地数据。
+  - 新图标改为青绿色记录卡片与金色工资符号；`npm run assets:native` 已重新生成 Android、iOS、Electron 所需图标和启动图资源。
+  - 版本提升到 `v0.4.1`，入口资源参数、Service Worker 缓存名 `worktimeapp-v41`、Android `versionCode 41/versionName 0.4.1`、iOS `CURRENT_PROJECT_VERSION 41/MARKETING_VERSION 0.4.1` 同步更新。
+  - 新增 `scripts/prepare-release.mjs`、`npm run release:prepare`、`npm run dist:self`、`npm run dist:android:debug`、`npm run dist:desktop`，用于 GitHub Release、网盘和内部下载分发。
+  - `release-upload/` 会收集 `pwa-dist/`、已有 Android APK/AAB、已有 Electron 安装包、`INSTALL.md`、`release-manifest.json` 和 `SHA256SUMS.txt`；未生成的平台产物会在清单里标记为 skipped。
+- 验证结果：`npm run assets:native` 成功；`npm run build` 成功；`npx cap sync` 成功；`npm test` 55 项通过；`node --check src/app.js`、`src/storage.js`、`src/calculations.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/generate-native-assets.mjs`、`scripts/prepare-release.mjs`、`electron/main.cjs`、`electron/preload.cjs` 均通过；`npx cap doctor android` 与 `npx cap doctor ios` 通过；`npm audit --audit-level=moderate` 0 漏洞；`git diff --check` 通过；Android debug APK 构建成功；`npm run electron:dist` 生成 macOS arm64 ZIP/DMG；`npm run release:prepare` 生成 `release-upload/` 和校验和；本地浏览器 `http://127.0.0.1:52741/index.html?fresh=v041-brand` 验证标题、首启文案和图标加载正常。
+- 风险/注意：当前 Android 是 debug APK，长期公开分发仍建议配置 release keystore；macOS DMG/ZIP 为 ad-hoc 签名且未 notarize，普通用户可能遇到 Gatekeeper 提示；Windows/Linux 产物未在本机生成；iOS 不能承诺网盘下载 IPA 后普通用户直接安装，当前推荐 PWA 添加到主屏幕，原生包需 TestFlight、企业/组织内签名或开发者设备签名。
+- 后续建议：若要长期自分发，优先补 Android release keystore、macOS Developer ID notarization、Windows 代码签名，以及 GitHub Actions 多平台构建，把 `release-upload/` 作为人工上传或 CI artifact。
+
+## 2026-05-17 22:58 CST - v0.4.0 原生打包与发布安全加固
+
+- 触发原因：用户要求把已测试的 PWA 打包成对应平台软件版本，Android 支持新系统特性，iOS/macOS 支持 Apple 新设计语言，同时做发布前 PM 级检查、安全检查和具体测试。
+- 修改文件：`.gitignore`、`package.json`、`package-lock.json`、`index.html`、`sw.js`、`src/app.js`、`src/storage.js`、`styles.css`、`functions/index.js`、`tests/functions.test.js`、`capacitor.config.json`、`android/`、`ios/`、`electron/`、`electron-builder.yml`、`build/entitlements.mac.plist`、`build/icon.png`、`assets/native/`、`scripts/generate-native-assets.mjs`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 版本从 `v0.3.9` 提升到 `v0.4.0`，入口资源参数、Service Worker 缓存名、Android `versionCode/versionName`、iOS `CURRENT_PROJECT_VERSION/MARKETING_VERSION` 和 Electron 打包版本同步更新。
+  - 新增 Capacitor Android/iOS 原生工程；Android 目标 SDK 36，配置预测返回、边到边显示、主题图标、禁用明文流量、禁用 Android 备份和关闭 WebView debug。
+  - 新增 Electron 桌面壳和 `electron-builder.yml`，桌面端启用 `contextIsolation`、`sandbox`、禁用 Node 注入、CSP、安全外链限制和 macOS 系统材质窗口。
+  - 新增 `npm run assets:native`，生成 Android/iOS/Electron 图标和启动图；原生壳自动使用 `https://time.yuan6.cn/api/cloud` 云同步接口。
+  - 云备份接口加强 Origin 白名单、请求体真实字节限制、安全响应头、管理员登录限流、未知 action 前置拒绝、登录/注册/改密稳定限流分桶、用户会话版本失效和云端快照白名单清洗。
+  - 用户修改云备份密码必须同时提交有效会话和原密码；本地 JSON 备份不再导出 `sessionToken`，导入备份也不会恢复旧 token。
+  - 移动端底部导航加入图标；登记抽屉、设置详情和云备份/倒班设置入口支持返回键关闭；切换底部主导航时清理设置详情 history，避免空返回。
+  - 修复首启向导在 360/390px 下的横向溢出；移动端设置详情的个税/休息方式条件字段恢复正确隐藏；保存按钮增加可触控宽度。
+- 验证结果：`npm run assets:native`、`npm run build`、`npx cap sync`、`npm test` 55 项通过；`node --check src/app.js`、`src/storage.js`、`src/calculations.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/generate-native-assets.mjs`、`electron/main.cjs`、`electron/preload.cjs` 均通过；`npm audit --audit-level=moderate` 0 漏洞；`npx cap doctor android` 与 `npx cap doctor ios` 通过；`JAVA_HOME=/opt/homebrew/opt/openjdk@21 ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew assembleDebug` 成功生成 Android debug APK；`npm run electron:pack` 成功生成 macOS arm64 Electron app。本地内置浏览器在 390px 验证首启向导、设置个税详情、工作日与假期详情、底部云备份入口返回、设置详情切主导航后返回；756px 报表页未发现横向溢出。
+- 风险/注意：Android 正式上架仍需 keystore/release signing/AAB；iOS/TestFlight 需要完整 Xcode、Apple Developer Team、证书和 provisioning profile；macOS 正式分发需要 Developer ID 签名、notarization 和 staple，当前 Electron app 只是 ad-hoc 开发验证包。生产 KV 建议配置 `SESSION_HMAC_SECRET`，并避免使用明文 `admin_passwd`。
+- 后续建议：接入 CI 时把 `npm test`、`npm run build`、`npx cap sync`、Android assemble、Electron pack 分成独立 job；拿到 Apple/Android 签名材料后再补 release signing 和商店隐私清单。
+
 ## 2026-05-15 13:53 CST - v0.3.9 倒班云同步与结束倒计时
 
 - 触发原因：用户要求倒班记录也参与云同步，并把倒班页底部无意义的轮次展示改为距本次班次结束还有多久；同时要求增加工时班次时间复用选项、再次检查接口和界面，并推送 GitHub。

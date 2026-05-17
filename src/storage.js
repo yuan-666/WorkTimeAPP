@@ -69,11 +69,12 @@ export function structuredCloneSafe(value) {
 
 export function exportBackup(state) {
   if (state.backup) state.backup.lastExportedAt = new Date().toISOString();
+  const data = backupSafeState(state);
   const blob = new Blob([JSON.stringify({
     exportedAt: new Date().toISOString(),
     app: "worktimeapp",
     version: 1,
-    data: state
+    data
   }, null, 2)], { type: "application/json;charset=utf-8" });
   downloadBlob(blob, `工时备份_${dateStamp()}.json`);
 }
@@ -81,11 +82,32 @@ export function exportBackup(state) {
 export function importBackupText(text) {
   const parsed = JSON.parse(text);
   const data = parsed.data || parsed;
+  const cloud = {
+    ...initialState.cloud,
+    ...(data.cloud || {}),
+    sessionToken: "",
+    tokenExpiresAt: "",
+    lastUsedAt: ""
+  };
   return {
     ...initialState,
     ...data,
     settings: mergeSettings(data.settings || {}),
-    cloud: { ...initialState.cloud, ...(data.cloud || {}) }
+    cloud
+  };
+}
+
+function backupSafeState(state) {
+  return {
+    ...state,
+    cloud: {
+      userId: String(state.cloud?.userId || ""),
+      lastSyncAt: state.cloud?.lastSyncAt || "",
+      remoteUpdatedAt: state.cloud?.remoteUpdatedAt || "",
+      sessionToken: "",
+      tokenExpiresAt: "",
+      lastUsedAt: ""
+    }
   };
 }
 
