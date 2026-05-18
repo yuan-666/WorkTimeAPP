@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "明薪记"
+    },
+    {
+      "name": "module_desc",
+      "value": "明薪记 HarmonyOS ArkWeb 原生外壳"
+    },
+    {
+      "name": "entryability_desc",
+      "value": "明薪记 ArkWeb 入口"
+    },
+    {
+      "name": "internet_reason",
+      "value": "用于加载生产 PWA URL 和访问云备份接口"
+    }
+  ]
+}

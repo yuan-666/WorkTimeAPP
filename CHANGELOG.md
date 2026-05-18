@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.4 - 2026-05-18
+
+### Fixed
+- 修复 macOS 26 Electron 自分发包启动时报 `DYLD Library missing` / `Electron Framework` Team ID mismatch 的问题，主 app 和 helper entitlements 启用 library validation 例外。
+- 修复深色模式玻璃层对比度异常：近黑背景、表面层、输入框、底部导航、抽屉和设置详情统一提高不透明度、边框和文字对比。
+- Web 侧新增 `WorkTimeNativeShell.consumeBack()` / `WorkTimeHarmonyShell.consumeBack()`，原生壳返回键会先关闭登记抽屉、设置详情、改密面板或倒班详情。
+
+### Added
+- Android 原生壳新增 `WorkTimeNative` JS bridge 和返回键桥接，并加入 `io.github.kyant0:backdrop` 依赖，作为 AndroidLiquidGlass 原生材质层接入基础。
+- iOS 原生壳新增 `WorkTimeBridgeViewController`，通过 WKUserScript 注入 Apple native shell 状态，并让 WKWebView 与系统材质背景衔接。
+- 新增 `harmony/` ArkTS/ArkUI + ArkWeb 初始工程骨架，支持本地 rawfile PWA 或生产 URL，预留平台、握持偏好、native shell 和返回键桥接。
+
+### Release
+- 版本升级到 `v0.4.4`，Service Worker 缓存名为 `worktimeapp-v44`。
+- Android `versionCode 44` / `versionName 0.4.4`。
+- iOS `CURRENT_PROJECT_VERSION 44` / `MARKETING_VERSION 0.4.4`。
+- HarmonyOS `versionCode 44` / `versionName 0.4.4`。
+
 ## v0.4.3 - 2026-05-18
 
 ### Changed

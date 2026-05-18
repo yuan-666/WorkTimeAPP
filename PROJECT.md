@@ -1,7 +1,7 @@
 # 明薪记项目说明
 
-更新时间：2026-05-18 00:42 CST
-当前版本：v0.4.3
+更新时间：2026-05-18 09:20 CST
+当前版本：v0.4.4
 
 ## 项目定位
 
@@ -15,17 +15,18 @@
 - 数据存储：浏览器 `localStorage`，支持 JSON 备份导入导出。
 - 远端仓库：`https://github.com/yuan-666/WorkTimeAPP.git`
 - Git 用户邮箱：`2991077067@qq.com`
-- 最新功能发布提交：`v0.4.3` App 化返回手势、类玻璃材质、平台识别、握持偏好和自分发正式发布
-- 最新发布说明：`RELEASE_NOTES.md`（推荐 Git 标签与 GitHub Release：`v0.4.3`）
+- 最新功能发布提交：`v0.4.4` 原生外壳桥接、macOS 26 Electron 签名修复、深色玻璃对比度和 HarmonyOS 骨架
+- 最新发布说明：`RELEASE_NOTES.md`（推荐 Git 标签与 GitHub Release：`v0.4.4`）
 - 版本规则：补丁号只走 `0` 到 `9`；超过 `9` 时进入下一小版本，因此原 `v0.2.10` 记为 `v0.3.0`，`v0.3.9` 后进入 `v0.4.0`。
 - 本地预览：`npm run serve` 后打开 `http://127.0.0.1:4173/index.html`；如需避开旧预览端口，可用 `PORT=52730 npm run serve`
 - 静态构建：`npm run build`，输出目录为 `dist/`
 - 原生资源：`npm run assets:native` 生成 Android/iOS/Electron 图标与启动图。
 - 原生同步：`npm run cap:sync` 同步 `dist/` 到 `android/` 与 `ios/`。
+- HarmonyOS 壳：`harmony/` 是 DevEco Studio 可接手的 ArkTS/ArkUI + ArkWeb 初始工程，默认加载本地 rawfile PWA 占位页，也可切到 `https://time.yuan6.cn/`；包名继续保持 `cn.yuanhuang.worktimeapp`，KV 仍为 `worktimeapp`。
 - 自分发整理：`npm run release:prepare` 生成 `release-upload/`；`npm run dist:self` 会先生成图标、同步原生工程、构建 PWA，再整理上传目录。
 - Android 构建：`npm run cap:android` 后进入 `android/` 执行 Gradle；当前已验证 debug APK，正式 AAB 需要签名材料。
 - iOS 打包：`npm run cap:ios` / `npx cap open ios`；正式归档需要完整 Xcode、Apple Team、证书和 profile。
-- 桌面打包：`npm run electron:pack` 生成开发验证 app，`npm run electron:dist` 生成分发包；正式 macOS 分发需要 Developer ID 签名与 notarization。
+- 桌面打包：`npm run electron:pack` 生成开发验证 app，`npm run electron:dist` 生成分发包；macOS Electron 包已启用 Hardened Runtime 所需的 library validation 例外，避免 macOS 26 因 Electron Framework Team ID / DYLD library validation 拦截启动；正式 macOS 分发仍需要 Developer ID 签名与 notarization。
 - ESA 函数入口：`functions/index.js`，单个 `fetch` 入口分发云备份与管理员后台请求；用户界面不展示接口配置。
 - 云端 KV：`worktimeapp`，用户记录键为 `user:{userId}`；管理员配置键为 `admin_name`、`admin_passwd`；RSA-OAEP 私钥 JWK 键为 `RSA_key`。
 
@@ -45,6 +46,7 @@
 - `android/`：Android Studio / Gradle 工程，目标 SDK 36。
 - `ios/`：Xcode / Capacitor iOS 工程。
 - `electron/`：Electron 桌面壳主进程与 preload。
+- `harmony/`：HarmonyOS ArkTS / ArkUI / ArkWeb 原生壳初始工程，面向 DevEco Studio handoff。
 - `electron-builder.yml`：macOS、Windows、Linux 打包配置。
 - `scripts/generate-native-assets.mjs`：生成原生图标和启动图。
 - `scripts/prepare-release.mjs`：整理 GitHub Release / 网盘自分发目录、安装说明、发布清单和 SHA-256 校验和。
@@ -116,6 +118,9 @@
 - `v0.4.1` 用户展示名称改为“明薪记”，保留 `cn.yuanhuang.worktimeapp`、`worktimeapp` KV 和 `worktimeapp:v1` 本地存储，避免升级破坏原有安装与云备份。
 - `v0.4.1` 新增自分发整理脚本和 `release-upload/` 目录流程，当前已验证 Android debug APK、macOS arm64 DMG/ZIP、PWA 静态包和校验和生成。
 - `v0.4.3` 增强 App 化交互：登记抽屉、设置详情、云备份改密和倒班详情统一进入返回栈，嵌套层按层数一次性回退，平板/窄桌面也走 App 化布局并保留底部导航页脚，新增平台识别、握持偏好和 Web 层类 Liquid Glass 材质。
+- `v0.4.4` 修复原生外壳问题：macOS Electron 包启用 library validation 例外，Android 壳加入 `WorkTimeNative` bridge 和 `io.github.kyant0:backdrop` 依赖，iOS 壳改用自定义 `WorkTimeBridgeViewController` 注入 Apple native shell 状态，Web 侧提供 `WorkTimeNativeShell.consumeBack()`。
+- `harmony/` 新增初始 ArkTS 原生壳骨架：`AppScope/app.json5` 使用 `cn.yuanhuang.worktimeapp`，`ShellConfig.ets` 保留 `worktimeapp` KV 说明和本地/远程加载开关，`Index.ets` 通过 ArkWeb 暴露 `WorkTimeNative` JS proxy 并优先让 Web history/二级层处理返回。
+- `v0.4.4` macOS Electron 签名修复：主 app 和 helper entitlements 启用 `com.apple.security.cs.disable-library-validation`，并将 helper 继承 plist 拆分到 `build/entitlements.mac.inherit.plist`，避免 macOS 26 启动时出现 DYLD Library missing / Electron Framework Team ID mismatch。
 - Android 工程已设置 target/compile SDK 36、预测返回、主题图标、边到边显示、禁用明文流量和关闭 WebView 调试。
 - Electron 工程启用沙箱、上下文隔离、CSP、受限外链和 macOS 系统材质窗口。
 
@@ -162,7 +167,8 @@ curl -I http://127.0.0.1:4173/index.html
 
 ## 最近交接重点
 
-- `v0.4.3` 本轮发布重点是 App 感和返回手势：统一二级层 history 处理，保存工时/设置后会消费返回层，切页会清掉旧抽屉和设置层；嵌套二级层不再连续 `history.back()`，而是按层数一次性回退；倒班详情在移动端变为底部抽屉；721-1120px 宽度使用底部导航、移动月历、登录状态页脚和设置 drill-in。视觉上增强底部导航、抽屉、设置详情、云备份改密的玻璃材质，并新增 `data-platform`、`data-display-mode`、`data-handedness`、`WorkTimeAppBridge.setHandedness()`，为 Android/HarmonyOS 差异化和鸿蒙原生壳桥接预留接口。发布目录已重新生成，Android debug APK 为 `versionCode 43/versionName 0.4.3`，macOS arm64 DMG/ZIP 为 `0.4.3`，脚本会跳过旧版本桌面包。
+- `v0.4.4` 本轮发布重点是原生外壳和稳定性：macOS 26 崩溃来自 Electron Framework 在 Hardened Runtime 下被 library validation 拦截，已通过主 app/helper entitlement 修复；Android 增加原生 JS bridge、返回键桥接和 Kyant0 Backdrop 依赖基础；iOS 使用自定义 Capacitor Bridge VC 注入 Apple native shell 状态；Web 侧提供 `WorkTimeNativeShell.consumeBack()` 给所有原生壳调用；深色模式玻璃层不再低对比。Android debug APK 版本应为 `versionCode 44/versionName 0.4.4`，macOS arm64 DMG/ZIP 应重新生成为 `0.4.4`。
+- `harmony/` 当前是初始工程骨架，未实际构建或签名；交给 DevEco Studio 前可先运行 `npm run build`，再把 `dist/` 内容替换 `harmony/entry/src/main/resources/rawfile/worktimeapp/` 的占位文件。返回键策略在 ArkWeb 层先调用 Web 侧 `window.WorkTimeHarmonyShell.consumeBack()`，然后才回退 Web history 或退出原生页面。
 - `v0.4.1` 本轮发布重点是品牌和自分发：产品名从“明薪工时”改为“明薪记”，新图标采用青绿色记录卡片与金色工资符号，PWA/Android/iOS/Electron/后台展示名已统一；技术 ID、KV 和本地存储保持不变。新增 `scripts/prepare-release.mjs`、`release:prepare`、`dist:self`、`dist:android:debug`、`dist:desktop`，当前 `release-upload/` 已包含 PWA 静态包、Android debug APK、macOS arm64 DMG/ZIP、安装说明、发布清单和 SHA-256 校验文件。iOS 自分发仍推荐 PWA 添加到主屏幕；原生 iOS 包需要 TestFlight、企业/组织内签名或开发者设备签名。
 - `v0.4.0` 本轮发布重点是原生打包与安全加固：新增 Capacitor Android/iOS、Electron 桌面壳、原生资产生成、Android target SDK 36、Electron CSP 和外链限制；云备份修复未知 action 绕限流、改密必须验证原密码、本地备份去除 session token、云端 settings 白名单清洗。当前本地能构建 Android debug APK 和 macOS arm64 Electron app；iOS 正式归档仍受限于完整 Xcode 和 Apple 签名材料。
 - `v0.3.9` 本轮发布重点是倒班云同步、班次结束倒计时、时间复用和窄桌面溢出修复：报表、设置、记录筛选、倒班页和页面切换动效在 756px 浏览器宽度下已完成浏览器扫描，无页面级横向滚动；入口资源版本参数和 Service Worker 缓存同步升级。

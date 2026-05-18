@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import WebKit
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -46,4 +47,55 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 
+}
+
+@objc(WorkTimeBridgeViewController)
+class WorkTimeBridgeViewController: CAPBridgeViewController, WKScriptMessageHandler {
+    override func webViewConfiguration(for instanceConfiguration: InstanceConfiguration) -> WKWebViewConfiguration {
+        let configuration = super.webViewConfiguration(for: instanceConfiguration)
+        let shellScript = """
+        (() => {
+          const root = document.documentElement;
+          root.dataset.platform = 'ios';
+          root.dataset.nativeShell = 'ios';
+          root.dataset.nativeMaterial = 'apple-liquid-glass';
+          window.WorkTimeNativeShell = window.WorkTimeNativeShell || {};
+          window.WorkTimeNativeShell.info = {
+            platform: 'ios',
+            shellName: 'capacitor-ios',
+            material: 'Apple Liquid Glass ready'
+          };
+          window.WorkTimeNativeShell.postMessage = (payload) => {
+            try {
+              window.webkit?.messageHandlers?.WorkTimeNative?.postMessage(payload);
+            } catch (_) {}
+          };
+          window.dispatchEvent(new CustomEvent('worktime:native-shell', { detail: window.WorkTimeNativeShell.info }));
+        })();
+        """
+        configuration.userContentController.addUserScript(WKUserScript(source: shellScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        configuration.userContentController.add(self, name: "WorkTimeNative")
+        return configuration
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.systemGroupedBackground
+        webView?.isOpaque = false
+        webView?.backgroundColor = UIColor.clear
+        webView?.scrollView.backgroundColor = UIColor.clear
+        webView?.scrollView.contentInsetAdjustmentBehavior = .never
+    }
+
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        return traitCollection.userInterfaceStyle == .dark ? .lightContent : .darkContent
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "WorkTimeNative" else { return }
+    }
+
+    deinit {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "WorkTimeNative")
+    }
 }

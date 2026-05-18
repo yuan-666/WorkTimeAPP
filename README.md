@@ -2,7 +2,7 @@
 
 明薪记是一个离线优先的跨平台工时、加班、薪资和个税记录 PWA。名字取“把工资算明白、把工时记清楚”的意思：日常记录要轻，工资结果要清楚。Windows、macOS、iOS、Android、鸿蒙都可以通过现代浏览器运行，移动端可添加到主屏幕。
 
-当前版本：`v0.4.3`
+当前版本：`v0.4.4`
 
 ## 功能
 
@@ -49,6 +49,7 @@
 - PWA 离线缓存，数据默认保存在本机浏览器 `localStorage`
 - 支持 Capacitor Android/iOS 原生壳和 Electron 桌面壳；原生壳会自动使用 `https://time.yuan6.cn/api/cloud` 云同步接口
 - Android 工程目标 SDK 36，支持预测返回、边到边显示、主题图标和安全 WebView 配置
+- HarmonyOS 初始原生壳位于 `harmony/`，使用 ArkTS/ArkUI + ArkWeb 加载本地 PWA rawfile 或生产 URL，并预留平台、握持习惯和 native shell JS bridge
 - Electron 桌面端默认禁用 Node 注入、开启沙箱和 CSP，外链只允许跳转到 GitHub、博客和明薪记域名
 
 ## 运行
@@ -92,6 +93,7 @@ android/                Android Studio 工程
 ios/                    Xcode / Capacitor iOS 工程
 electron/               Electron 桌面壳入口和 preload
 electron-builder.yml    macOS / Windows / Linux 打包配置
+harmony/                HarmonyOS ArkTS / ArkWeb 原生壳初始工程
 scripts/generate-native-assets.mjs 原生图标与启动图生成脚本
 scripts/prepare-release.mjs 自分发目录、安装说明和校验和生成脚本
 CHANGELOG.md            版本变更记录
@@ -163,6 +165,14 @@ npx cap open ios
 
 当前 iOS 工程已同步。iPhone / iPad 不能像 Android 一样把 IPA 放到网盘后让普通用户直接安装；当前推荐继续用 PWA 安装到主屏幕。若后续要原生 iOS 包，需要 TestFlight、企业/组织内分发或开发者设备签名，并准备完整 Xcode、Apple Developer Team、Bundle ID 权属、证书和 provisioning profile；仅安装 Command Line Tools 无法完成归档。
 
+HarmonyOS：
+
+```bash
+npm run build
+```
+
+然后把 `dist/` 内容复制到 `harmony/entry/src/main/resources/rawfile/worktimeapp/`，用 DevEco Studio 打开 `harmony/`。当前 `harmony/` 是 ArkTS/ArkUI + ArkWeb 初始骨架，不接入 root npm 构建链，也未包含签名配置；默认加载本地 rawfile 占位页，`harmony/entry/src/main/ets/pages/ShellConfig.ets` 可切换到生产 URL `https://time.yuan6.cn/`。包名继续保持 `cn.yuanhuang.worktimeapp`，云端 KV 仍是 `worktimeapp`，避免破坏现有云备份和安装身份。
+
 桌面端：
 
 ```bash
@@ -170,7 +180,7 @@ npm run electron:pack
 npm run electron:dist
 ```
 
-`electron:pack` 会输出开发验证用 app 到 `release/`，`electron:dist` 会尝试生成 macOS DMG/ZIP、Windows 安装包和 Linux AppImage。自分发时可以把 `release/` 中的当前版本安装包交给 `npm run release:prepare` 收集到 `release-upload/`，旧版本桌面包会被跳过。macOS 未签名未公证包会触发 Gatekeeper 提示；Windows 未签名安装包可能触发 SmartScreen。公开分发前建议补齐 Developer ID notarization 和 Windows 代码签名。
+`electron:pack` 会输出开发验证用 app 到 `release/`，`electron:dist` 会尝试生成 macOS DMG/ZIP、Windows 安装包和 Linux AppImage。自分发时可以把 `release/` 中的当前版本安装包交给 `npm run release:prepare` 收集到 `release-upload/`，旧版本桌面包会被跳过。macOS 包在 Hardened Runtime 下启用 Electron 所需的 library validation 例外，避免 macOS 26 因 Electron Framework Team ID / DYLD library validation 拦截启动；未 Developer ID 签名和公证的包仍可能触发 Gatekeeper 提示。Windows 未签名安装包可能触发 SmartScreen。公开分发前建议补齐 Developer ID notarization 和 Windows 代码签名。
 
 ## 自分发策略
 

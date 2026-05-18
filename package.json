@@ -1,6 +1,6 @@
 {
   "name": "worktime-pwa",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "type": "module",
   "description": "明薪记：离线优先的跨平台工时、加班、薪资和个税记录应用。",

@@ -18,6 +18,43 @@
 - 后续建议：
 ```
 
+## 2026-05-18 09:20 CST - v0.4.4 原生外壳修复与深色玻璃修正
+
+- 触发原因：用户要求各平台调用自己的原生外壳，补 HarmonyOS Ark 外壳，按 AndroidLiquidGlass/Apple Liquid Glass 方向适配平台特性，并修复 macOS 26 Electron 启动崩溃和深色模式玻璃对比度异常。
+- 修改文件：`package.json`、`package-lock.json`、`index.html`、`sw.js`、`src/app.js`、`styles.css`、`DESIGN.md`、`android/app/build.gradle`、`android/app/src/main/java/cn/yuanhuang/worktimeapp/MainActivity.java`、`ios/App/App/AppDelegate.swift`、`ios/App/App/Base.lproj/Main.storyboard`、`ios/App/App.xcodeproj/project.pbxproj`、`harmony/`、`electron-builder.yml`、`build/entitlements.mac.plist`、`build/entitlements.mac.inherit.plist`、`scripts/prepare-release.mjs`、`README.md`、`CHANGELOG.md`、`RELEASE_NOTES.md`、`changelog.html`、`PROJECT.md`、`CONTEXT_SNAPSHOT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 版本提升到 `v0.4.4`，入口资源参数、Service Worker 缓存名 `worktimeapp-v44`、Android `versionCode 44/versionName 0.4.4`、iOS `CURRENT_PROJECT_VERSION 44/MARKETING_VERSION 0.4.4`、HarmonyOS `versionCode 44/versionName 0.4.4` 同步更新。
+  - macOS Electron 主 app 和 helper entitlement 启用 `com.apple.security.cs.disable-library-validation`，避免 macOS 26 下 Electron Framework 因 Team ID / library validation 被 dyld 拦截。
+  - Web 侧新增 `WorkTimeNativeShell.consumeBack()` / `WorkTimeHarmonyShell.consumeBack()`，所有原生壳可先关闭登记抽屉、设置详情、云备份改密或倒班详情，再决定是否退出。
+  - Android 原生壳新增 `WorkTimeNative` JS bridge、原生返回键桥接、透明系统栏和 `io.github.kyant0:backdrop` 依赖基础。
+  - iOS 壳改为自定义 `WorkTimeBridgeViewController`，用 WKUserScript 注入 Apple native shell/material 状态，WKWebView 背景透明并衔接系统分组背景。
+  - 新增 HarmonyOS ArkTS/ArkUI + ArkWeb 工程骨架，支持本地 rawfile PWA 或 `https://time.yuan6.cn/`，预留平台、握持偏好和返回键桥接。
+  - 深色模式玻璃层改用近黑背景、更高不透明度、更明确边框和内高光，提升输入框、底部导航、移动抽屉、设置详情和云同步卡片可读性。
+- 验证结果：`npm test` 55 项通过；`node --check src/app.js`、`src/calculations.js`、`src/storage.js`、`src/export.js`、`functions/index.js`、`sw.js`、`scripts/prepare-release.mjs` 通过；`plutil -lint build/entitlements.mac.plist build/entitlements.mac.inherit.plist` 通过；`npm run build` 成功；`npm audit --audit-level=moderate` 0 漏洞；`npm run assets:native` 成功；`npx cap sync` 成功；`npx cap doctor android` 与 `npx cap doctor ios` 通过；Android `./gradlew assembleDebug` 成功，APK metadata 为 `versionCode 44/versionName 0.4.4/targetSdk 36`；`npm run electron:pack` 与 `npm run electron:dist` 成功；主 app/helper entitlements 均含 `disable-library-validation`；`codesign --verify --deep --strict --verbose=4 release/mac-arm64/明薪记.app` 通过；直接启动 macOS app 5 秒未出现 dyld 立即崩溃；`npm run release:prepare` 成功且只收集 v0.4.4 桌面包；`git diff --check` 通过；本地预览 `curl -I http://127.0.0.1:52844/index.html` 返回 200。iOS 因当前机器只有 Command Line Tools，`xcodebuild` 无法执行，需要完整 Xcode 才能编译验证。
+- 风险/注意：HarmonyOS 需在 DevEco Studio/HarmonyOS SDK 中最终构建签名；Android Kyant0 Backdrop 已加入依赖基础，但完整 Compose Liquid Glass 外壳仍需真机验证后再进一步包裹 WebView；Apple 官方 Liquid Glass 高级 API 受 Xcode/iOS SDK 版本约束，当前 iOS 壳使用系统材质背景和 Web 注入桥接，避免破坏现有 Capacitor 构建。
+- 后续建议：发布 `v0.4.4` 替换 `v0.4.3` macOS 包；拿到 Developer ID 后做 notarization；后续如要更深的 Android/iOS 原生材质，需要在独立原生壳中以 Compose/SwiftUI 包裹 WebView 并做真机性能测试。
+
+## 2026-05-18 08:52 CST - HarmonyOS ArkTS/ArkWeb 原生壳骨架
+
+- 触发原因：用户要求只在 `harmony/` 目录和 README/PROJECT/MEMORY_UPDATES 相关说明内，设计并落地可交给 DevEco Studio 的 HarmonyOS ArkTS/ArkWeb 原生外壳初始工程。
+- 修改文件：`harmony/README.md`、`harmony/hvigorfile.ts`、`harmony/oh-package.json5`、`harmony/build-profile.json5`、`harmony/AppScope/app.json5`、`harmony/entry/build-profile.json5`、`harmony/entry/src/main/module.json5`、`harmony/entry/src/main/ets/entryability/EntryAbility.ets`、`harmony/entry/src/main/ets/pages/ShellConfig.ets`、`harmony/entry/src/main/ets/pages/NativeBridge.ets`、`harmony/entry/src/main/ets/pages/Index.ets`、`harmony/entry/src/main/resources/base/element/string.json`、`harmony/entry/src/main/resources/base/element/color.json`、`harmony/entry/src/main/resources/base/profile/main_pages.json`、`harmony/entry/src/main/resources/base/media/app_icon.png`、`harmony/entry/src/main/resources/rawfile/worktimeapp/index.html`、`README.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：新增 HarmonyOS Stage 模型初始工程骨架，包名保持 `cn.yuanhuang.worktimeapp`，展示名保持“明薪记”，KV 说明保持 `worktimeapp`；ArkWeb 默认加载本地 rawfile 占位 PWA，也可在 `ShellConfig.ets` 切换到 `https://time.yuan6.cn/`；预留 `WorkTimeNative` JS proxy，提供 platform、shell info、handedness 和 ready 方法；页面加载完成后注入 HarmonyOS platform/native shell dataset，并触发现有 `WorkTimeAppBridge.setHandedness()`/`worktime:handedness` 链路；返回键优先让 Web history 或后续 `WorkTimeHarmonyShell.consumeBack()` 消费，再退出原生页面。
+- 验证结果：未执行 DevEco Studio 构建；本轮按请求只做工程骨架和文档。已用 `find harmony -type f` 检查文件落位，并运行 `git diff --check -- README.md PROJECT.md MEMORY_UPDATES.md harmony` 通过。
+- 风险/注意：ArkTS API 细节仍需在目标 DevEco Studio/HarmonyOS SDK 中最终编译确认；当前 rawfile 是占位页，真实本地包需要先 `npm run build` 再复制 `dist/` 到 `harmony/entry/src/main/resources/rawfile/worktimeapp/`；没有加入签名配置，也没有改动 Android/iOS/Electron/CSS。
+- 后续建议：在 DevEco Studio 中打开 `harmony/` 后先检查 hvigor/plugin 版本是否需按本机 SDK 自动升级，再验证 ArkWeb `javaScriptProxy` 和返回键回调；Web 端后续可补 `window.WorkTimeHarmonyShell.consumeBack()`，让原生返回键更精确地区分二级层和普通历史。
+
+## 2026-05-18 08:51 CST - macOS 26 Electron 启动签名修复
+
+- 触发原因：用户反馈 macOS Electron `v0.4.3` 在 macOS 26 启动时报 DYLD Library missing / Electron Framework Team ID mismatch，要求聚焦签名、entitlements 和打包配置直接修复。
+- 修改文件：`electron-builder.yml`、`build/entitlements.mac.plist`、`build/entitlements.mac.inherit.plist`、`scripts/prepare-release.mjs`、`README.md`、`RELEASE_NOTES.md`、`PROJECT.md`、`MEMORY_UPDATES.md`。
+- 行为变化：
+  - 主 app entitlement 增加 `com.apple.security.cs.disable-library-validation`，允许 Hardened Runtime 下加载 Electron Framework，避免 Team ID / library validation 拦截被 dyld 表现为库缺失。
+  - `entitlementsInherit` 改为独立的 `build/entitlements.mac.inherit.plist`，helper 进程继承 JIT、unsigned executable memory 和 library validation 例外，不再复用带网络权限的主 app plist。
+  - README、发布说明和自分发安装说明补充 macOS 26 Electron 签名注意事项。
+- 验证结果：本条记录对应补丁后的验证命令见本轮最终回复。
+- 风险/注意：本机钥匙串没有有效 Apple Developer ID signing identity，当前仍只能验证 ad-hoc/开发验证包；公开分发仍需 Developer ID 签名、notarization 和 staple。
+- 后续建议：拿到 Developer ID 后执行 `npm run electron:dist`，再用 `codesign -dv --verbose=4` 确认主 app、helper 和 Electron Framework TeamIdentifier 一致，并运行 `spctl`/notarization 校验。
+
 ## 2026-05-18 00:42 CST - v0.4.3 App 化平台体验发布准备
 
 - 触发原因：用户要求本版修改完成后发布为新版本，先推送 GitHub 方便 ESA 部署，再构建平台安装包并发布 GitHub Release，同时更新 README、版本说明和项目描述文件。

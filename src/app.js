@@ -34,21 +34,21 @@ import {
   summarizeYear,
   validateEntry,
   yearFromDate
-} from "./calculations.js?v=0.4.3";
+} from "./calculations.js?v=0.4.4";
 import {
   createId,
   exportBackup,
   importBackupText,
   loadState,
   saveState
-} from "./storage.js?v=0.4.3";
-import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.4.3";
+} from "./storage.js?v=0.4.4";
+import { exportYearCsv, exportYearExcel, shareYearReport } from "./export.js?v=0.4.4";
 
 const app = document.querySelector("#app");
 const now = new Date();
 const today = formatDate(now);
-const APP_VERSION = "v0.4.3";
-const RELEASE_COUNT = 26;
+const APP_VERSION = "v0.4.4";
+const RELEASE_COUNT = 27;
 const CLOUD_API_BASE = resolveCloudApiBase();
 const CLOUD_SESSION_MAX_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 let state = loadState();
@@ -615,7 +615,7 @@ document.addEventListener("touchmove", () => {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const registration = await navigator.serviceWorker.register("./sw.js?v=0.4.3", { updateViaCache: "none" });
+      const registration = await navigator.serviceWorker.register("./sw.js?v=0.4.4", { updateViaCache: "none" });
       registration.update().catch(() => {});
     } catch {
       // Service Worker registration is optional; the app remains usable online.
@@ -861,6 +861,26 @@ function closeCloudChangePassword(options = {}) {
   }
   ui.cloudChangePasswordOpen = false;
   render();
+}
+
+function handleNativeBackRequest() {
+  if (ui.cloudChangePasswordOpen && isMobileViewport()) {
+    closeCloudChangePassword();
+    return true;
+  }
+  if (ui.entrySheetOpen) {
+    closeEntrySheet();
+    return true;
+  }
+  if (ui.shiftDetailOpen) {
+    closeShiftDetailSheet();
+    return true;
+  }
+  if (ui.settingsSheetOpen && isMobileViewport()) {
+    closeSettingsSheet();
+    return true;
+  }
+  return false;
 }
 
 function syncEntrySheetState() {
@@ -4563,11 +4583,18 @@ function applyRuntimeChrome() {
   root.dataset.pointer = globalThis.matchMedia?.("(pointer: coarse)")?.matches ? "coarse" : "fine";
   const handedness = ["left", "right"].includes(state.settings?.handedness) ? state.settings.handedness : "auto";
   root.dataset.handedness = handedness;
-  root.dataset.nativeShell = globalThis.Capacitor?.isNativePlatform?.() || globalThis.WORKTIME_DESKTOP ? "true" : "false";
+  const nativeShell = globalThis.WorkTimeNativeShell?.info || globalThis.WorkTimeHarmonyShell?.info;
+  root.dataset.nativeShell = nativeShell?.shellName
+    ? (nativeShell.platform || nativeShell.shellName)
+    : (globalThis.Capacitor?.isNativePlatform?.() || globalThis.WORKTIME_DESKTOP ? "true" : "false");
+  if (nativeShell?.material) root.dataset.nativeMaterial = nativeShell.material;
 }
 
 function detectPlatform() {
   const ua = navigator.userAgent || "";
+  const nativePlatform = globalThis.WorkTimeNativeShell?.info?.platform || globalThis.WorkTimeHarmonyShell?.info?.platform;
+  if (nativePlatform === "harmonyos") return "harmony";
+  if (["android", "ios", "macos", "windows", "linux"].includes(nativePlatform)) return nativePlatform;
   if (/HarmonyOS|OpenHarmony|ArkWeb|HuaweiBrowser|HMSCore/i.test(ua)) return "harmony";
   if (/Android/i.test(ua)) return "android";
   if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
@@ -4589,8 +4616,19 @@ globalThis.WorkTimeAppBridge = {
   ...(globalThis.WorkTimeAppBridge || {}),
   setHandedness: setHandednessPreference
 };
+globalThis.WorkTimeHarmonyShell = {
+  ...(globalThis.WorkTimeHarmonyShell || {}),
+  consumeBack: handleNativeBackRequest
+};
+globalThis.WorkTimeNativeShell = {
+  ...(globalThis.WorkTimeNativeShell || {}),
+  consumeBack: handleNativeBackRequest
+};
 window.addEventListener("worktime:handedness", (event) => {
   setHandednessPreference(event.detail?.handedness || event.detail);
+});
+window.addEventListener("worktime:native-shell", () => {
+  applyRuntimeChrome();
 });
 
 function themeModeLabel(mode) {

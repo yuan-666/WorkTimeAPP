@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>明薪记 HarmonyOS Shell Placeholder</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f2f2f7;
+        color: #1d1d1f;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      main {
+        max-width: 560px;
+        line-height: 1.7;
+      }
+      code {
+        background: rgba(0, 0, 0, 0.08);
+        border-radius: 6px;
+        padding: 2px 6px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #101014;
+          color: #f5f5f7;
+        }
+        code {
+          background: rgba(255, 255, 255, 0.12);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>明薪记 HarmonyOS 壳已就绪</h1>
+      <p>这是 ArkWeb 本地 rawfile 占位页。生产打包时，将根项目 <code>dist/</code> 的内容复制到 <code>harmony/entry/src/main/resources/rawfile/worktimeapp/</code>，并保留入口文件 <code>index.html</code>。</p>
+      <p>也可以在 <code>ShellConfig.ets</code> 中把 <code>loadMode</code> 改为 <code>remote</code>，直接加载 <code>https://time.yuan6.cn/</code>。</p>
+      <script>
+        document.documentElement.dataset.platform = 'harmonyos';
+        document.documentElement.dataset.nativeShell = 'harmony';
+      </script>
+    </main>
+  </body>
+</html>

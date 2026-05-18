@@ -1,0 +1,9 @@
+{
+  "name": "worktimeapp-harmony-shell",
+  "version": "0.4.4",
+  "description": "HarmonyOS ArkTS/ArkWeb shell for WorkTimeAPP",
+  "main": "",
+  "author": "yuan-666 <2991077067@qq.com>",
+  "license": "MIT",
+  "dependencies": {}
+}
